@@ -1,0 +1,191 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Arknights: Endfield Canonical Rules Schema",
+  "description": "JSON Schema for the frozen static rules and facility templates.",
+  "type": "object",
+  "required": [
+    "metadata",
+    "globals",
+    "routing_rules",
+    "facility_templates",
+    "recipes"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["version", "description"],
+      "properties": {
+        "version": {"type": "string"},
+        "description": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "globals": {
+      "type": "object",
+      "required": ["grid", "time", "logistics"],
+      "properties": {
+        "grid": {
+          "type": "object",
+          "required": ["width", "height"],
+          "properties": {
+            "width": {"type": "integer", "minimum": 1},
+            "height": {"type": "integer", "minimum": 1}
+          },
+          "additionalProperties": false
+        },
+        "time": {
+          "type": "object",
+          "required": ["tick_interval_seconds"],
+          "properties": {
+            "tick_interval_seconds": {"type": "number", "exclusiveMinimum": 0}
+          },
+          "additionalProperties": false
+        },
+        "logistics": {
+          "type": "object",
+          "required": [
+            "belt_capacity_per_tick",
+            "port_max_throughput_per_tick",
+            "machine_min_clearance_cells"
+          ],
+          "properties": {
+            "belt_capacity_per_tick": {"type": "number", "exclusiveMinimum": 0},
+            "port_max_throughput_per_tick": {"type": "number", "exclusiveMinimum": 0},
+            "machine_min_clearance_cells": {"type": "integer", "minimum": 0}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "routing_rules": {
+      "type": "object",
+      "required": ["layers", "bridge_mechanics"],
+      "properties": {
+        "layers": {
+          "type": "object",
+          "required": ["ground", "elevated"],
+          "properties": {
+            "ground": {"type": "integer", "enum": [0]},
+            "elevated": {"type": "integer", "enum": [1]}
+          },
+          "additionalProperties": false
+        },
+        "bridge_mechanics": {
+          "type": "object",
+          "required": [
+            "can_overlap_solid",
+            "can_overlap_straight_belt",
+            "can_overlap_curved_belt",
+            "can_overlap_splitter_merger",
+            "can_turn"
+          ],
+          "properties": {
+            "can_overlap_solid": {"type": "boolean"},
+            "can_overlap_straight_belt": {"type": "boolean"},
+            "can_overlap_curved_belt": {"type": "boolean"},
+            "can_overlap_splitter_merger": {"type": "boolean"},
+            "can_turn": {"type": "boolean"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "facility_templates": {
+      "type": "object",
+      "patternProperties": {
+        "^[a-zA-Z0-9_]+$": {
+          "type": "object",
+          "required": [
+            "dimensions",
+            "rotatable",
+            "needs_power",
+            "is_solid_z",
+            "port_rule"
+          ],
+          "properties": {
+            "dimensions": {
+              "type": "object",
+              "required": ["w", "h"],
+              "properties": {
+                "w": {"type": "integer", "minimum": 1},
+                "h": {"type": "integer", "minimum": 1}
+              },
+              "additionalProperties": false
+            },
+            "rotatable": {"type": "boolean"},
+            "needs_power": {"type": "boolean"},
+            "is_solid_z": {"type": "boolean"},
+            "port_rule": {
+              "type": "string",
+              "enum": [
+                "opposite_parallel_sides",
+                "long_sides",
+                "core_specific",
+                "omni_wireless",
+                "none",
+                "inward_facing"
+              ]
+            },
+            "core_limits": {
+              "type": "object",
+              "required": ["max_outputs", "max_inputs"],
+              "properties": {
+                "max_outputs": {"type": "integer", "minimum": 0},
+                "max_inputs": {"type": "integer", "minimum": 0}
+              },
+              "additionalProperties": false
+            },
+            "power_coverage_radius": {"type": "integer", "minimum": 0},
+            "placement_rule": {
+              "type": "string",
+              "enum": ["left_or_bottom_boundary"]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "recipes": {
+      "type": "object",
+      "patternProperties": {
+        "^[a-zA-Z0-9_]+$": {
+          "type": "object",
+          "required": ["template", "ticks_per_cycle", "inputs", "outputs"],
+          "properties": {
+            "template": {"type": "string"},
+            "ticks_per_cycle": {"type": "integer", "minimum": 1},
+            "inputs": {
+              "type": "object",
+              "patternProperties": {
+                "^[a-zA-Z0-9_]+$": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              },
+              "additionalProperties": false
+            },
+            "outputs": {
+              "type": "object",
+              "patternProperties": {
+                "^[a-zA-Z0-9_]+$": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

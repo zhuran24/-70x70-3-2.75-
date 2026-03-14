@@ -1,0 +1,13 @@
+{
+  "miracle_52_budget": {
+    "source_ore_inputs_required": 18.000000000000004,
+    "blue_iron_ore_inputs_required": 34.0,
+    "total_boundary_and_core_ports_required": 52.0
+  },
+  "available_resources": {
+    "max_boundary_ports_left_and_bottom": 46,
+    "protocol_core_extra_outputs": 6,
+    "total_available": 52
+  },
+  "status": "FEASIBLE"
+}

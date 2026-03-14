@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>基建极值排布 · 交互式查看器</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0d1117; color: #c9d1d9; font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden; }
+#app { display: flex; height: 100vh; }
+#sidebar { width: 280px; background: #161b22; border-right: 1px solid #30363d; padding: 16px; overflow-y: auto; flex-shrink: 0; }
+#sidebar h1 { font-size: 14px; color: #58a6ff; margin-bottom: 12px; }
+#sidebar h2 { font-size: 12px; color: #8b949e; margin: 12px 0 6px; text-transform: uppercase; letter-spacing: 1px; }
+.layer-toggle { display: flex; align-items: center; gap: 8px; padding: 6px 0; cursor: pointer; font-size: 13px; }
+.layer-toggle input { accent-color: #58a6ff; }
+.stat-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 12px; border-bottom: 1px solid #21262d; }
+.stat-label { color: #8b949e; }
+.stat-value { color: #58a6ff; font-weight: 600; }
+#search { width: 100%; padding: 8px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 13px; margin-bottom: 8px; }
+#search:focus { outline: none; border-color: #58a6ff; }
+#canvas-wrap { flex: 1; position: relative; }
+canvas { display: block; cursor: crosshair; }
+#tooltip { position: absolute; background: #1c2333; border: 1px solid #30363d; border-radius: 8px; padding: 10px 14px; font-size: 12px; pointer-events: none; display: none; z-index: 10; box-shadow: 0 4px 12px rgba(0,0,0,0.4); max-width: 260px; }
+#tooltip .tt-title { color: #58a6ff; font-weight: 600; margin-bottom: 4px; }
+#tooltip .tt-row { color: #8b949e; }
+#status-bar { position: absolute; bottom: 0; left: 0; right: 0; height: 28px; background: #161b22; border-top: 1px solid #30363d; display: flex; align-items: center; padding: 0 12px; font-size: 11px; color: #8b949e; gap: 16px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="sidebar">
+    <h1>🏗️ 基建极值排布查看器</h1>
+    <input type="text" id="search" placeholder="🔍 搜索实例 ID...">
+
+    <h2>图层控制</h2>
+    <label class="layer-toggle"><input type="checkbox" id="layer-bodies" checked> 刚体占格</label>
+    <label class="layer-toggle"><input type="checkbox" id="layer-power" checked> 供电覆盖</label>
+    <label class="layer-toggle"><input type="checkbox" id="layer-ports"> 端口箭头</label>
+    <label class="layer-toggle"><input type="checkbox" id="layer-ghost" checked> 幽灵空地</label>
+    <label class="layer-toggle"><input type="checkbox" id="layer-grid" checked> 网格线</label>
+
+    <h2>统计</h2>
+    <div class="stat-row"><span class="stat-label">总实例</span><span class="stat-value" id="stat-total">-</span></div>
+    <div class="stat-row"><span class="stat-label">占格数</span><span class="stat-value" id="stat-occ">-</span></div>
+    <div class="stat-row"><span class="stat-label">填充率</span><span class="stat-value" id="stat-fill">-</span></div>
+    <div class="stat-row"><span class="stat-label">空地面积</span><span class="stat-value" id="stat-ghost">-</span></div>
+
+    <h2>模板颜色</h2>
+    <div id="legend"></div>
+  </div>
+  <div id="canvas-wrap">
+    <canvas id="grid"></canvas>
+    <div id="tooltip"><div class="tt-title"></div><div class="tt-row"></div></div>
+    <div id="status-bar">
+      <span id="sb-pos">X: - Y: -</span>
+      <span id="sb-zoom">缩放: 100%</span>
+      <span>滚轮缩放 · 拖拽平移</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const GRID_W = 70, GRID_H = 70;
+const COLORS = {
+  crusher:'#4A90D9', smelter:'#E74C3C', grinder:'#2ECC71', workshop:'#9B59B6',
+  refinery:'#F39C12', assembler:'#1ABC9C', power_pole:'#F1C40F', protocol:'#E67E22',
+  border_input:'#3498DB', border_output:'#E91E63', core:'#FF6B6B', default:'#95A5A6'
+};
+
+let data = null, pools = null;
+let cellMap = {}; // (x,y) -> {iid, tpl, pose_idx}
+let powerCov = new Set();
+let scale = 10, offsetX = 0, offsetY = 0;
+let dragging = false, dragStartX = 0, dragStartY = 0;
+let highlightId = null;
+
+const canvas = document.getElementById('grid');
+const ctx = canvas.getContext('2d');
+const tooltip = document.getElementById('tooltip');
+
+function getColor(tpl) {
+  const t = tpl.toLowerCase();
+  for (const [k,v] of Object.entries(COLORS)) {
+    if (t.includes(k)) return v;
+  }
+  return COLORS.default;
+}
+
+function resize() {
+  const wrap = document.getElementById('canvas-wrap');
+  canvas.width = wrap.clientWidth;
+  canvas.height = wrap.clientHeight - 28;
+  draw();
+}
+
+function draw() {
+  if (!data) return;
+  const solution = data.placement_solution || {};
+  const ghost = data.ghost_rect;
+  const layers = {
+    bodies: document.getElementById('layer-bodies').checked,
+    power: document.getElementById('layer-power').checked,
+    ports: document.getElementById('layer-ports').checked,
+    ghost: document.getElementById('layer-ghost').checked,
+    grid: document.getElementById('layer-grid').checked,
+  };
+
+  ctx.save();
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.translate(offsetX, canvas.height - offsetY);
+  ctx.scale(scale, -scale);
+
+  // 网格背景
+  ctx.fillStyle = '#161b22';
+  ctx.fillRect(0, 0, GRID_W, GRID_H);
+
+  // 供电覆盖
+  if (layers.power) {
+    ctx.fillStyle = 'rgba(241,196,15,0.12)';
+    for (const key of powerCov) {
+      const [x,y] = key.split(',').map(Number);
+      ctx.fillRect(x, y, 1, 1);
+    }
+  }
+
+  // 刚体
+  if (layers.bodies) {
+    for (const [iid, sol] of Object.entries(solution)) {
+      const tpl = sol.facility_type || '';
+      const pidx = sol.pose_idx || 0;
+      const pool = (pools || {})[tpl] || [];
+      if (pidx >= pool.length) continue;
+      const pose = pool[pidx];
+      ctx.fillStyle = (highlightId && highlightId !== iid) ? 'rgba(100,100,100,0.3)' : getColor(tpl);
+      for (const c of (pose.occupied_cells || [])) {
+        ctx.fillRect(c[0], c[1], 1, 1);
+      }
+    }
+  }
+
+  // 幽灵空地
+  if (layers.ghost && ghost) {
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2/scale;
+    ctx.setLineDash([4/scale, 4/scale]);
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+    // 简化：空地位置未知时绘制在中心
+    const gx = Math.floor((GRID_W - ghost.w)/2);
+    const gy = Math.floor((GRID_H - ghost.h)/2);
+    ctx.fillRect(gx, gy, ghost.w, ghost.h);
+    ctx.strokeRect(gx, gy, ghost.w, ghost.h);
+    ctx.setLineDash([]);
+  }
+
+  // 网格线
+  if (layers.grid) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 0.5/scale;
+    for (let x = 0; x <= GRID_W; x++) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,GRID_H); ctx.stroke(); }
+    for (let y = 0; y <= GRID_H; y++) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(GRID_W,y); ctx.stroke(); }
+  }
+
+  ctx.restore();
+}
+
+function screenToGrid(sx, sy) {
+  const x = (sx - offsetX) / scale;
+  const y = (canvas.height - sy - offsetY) / scale;
+  return [Math.floor(x), Math.floor(y)];
+}
+
+function buildCellMap() {
+  cellMap = {};
+  powerCov = new Set();
+  if (!data || !pools) return;
+  const solution = data.placement_solution || {};
+  for (const [iid, sol] of Object.entries(solution)) {
+    const tpl = sol.facility_type || '';
+    const pidx = sol.pose_idx || 0;
+    const pool = pools[tpl] || [];
+    if (pidx >= pool.length) continue;
+    const pose = pool[pidx];
+    for (const c of (pose.occupied_cells || [])) {
+      cellMap[c[0]+','+c[1]] = { iid, tpl, pose_idx: pidx };
+    }
+    if (tpl.includes('power_pole')) {
+      for (const c of (pose.power_coverage_cells || [])) {
+        powerCov.add(c[0]+','+c[1]);
+      }
+    }
+  }
+}
+
+function updateStats() {
+  if (!data) return;
+  const sol = data.placement_solution || {};
+  const n = Object.keys(sol).length;
+  const occ = Object.keys(cellMap).length;
+  const ghost = data.ghost_rect;
+  document.getElementById('stat-total').textContent = n;
+  document.getElementById('stat-occ').textContent = occ + '/4900';
+  document.getElementById('stat-fill').textContent = (occ/4900*100).toFixed(1) + '%';
+  document.getElementById('stat-ghost').textContent = ghost ? ghost.w+'×'+ghost.h+'='+ghost.area : '-';
+
+  // Legend
+  const types = new Set(Object.values(sol).map(s => s.facility_type));
+  const legend = document.getElementById('legend');
+  legend.innerHTML = '';
+  for (const t of types) {
+    const d = document.createElement('div');
+    d.style.cssText = 'display:flex;align-items:center;gap:6px;padding:2px 0;font-size:11px;';
+    d.innerHTML = `<span style="width:12px;height:12px;border-radius:2px;background:${getColor(t)};display:inline-block;"></span>${t.substring(0,20)}`;
+    legend.appendChild(d);
+  }
+}
+
+// Events
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const [gx, gy] = screenToGrid(e.offsetX, e.offsetY);
+  const factor = e.deltaY < 0 ? 1.15 : 0.87;
+  const newScale = Math.max(2, Math.min(40, scale * factor));
+  offsetX = e.offsetX - gx * newScale;
+  offsetY = canvas.height - e.offsetY - gy * newScale;
+  scale = newScale;
+  document.getElementById('sb-zoom').textContent = '缩放: ' + Math.round(scale*10) + '%';
+  draw();
+});
+
+canvas.addEventListener('mousedown', e => { dragging = true; dragStartX = e.offsetX - offsetX; dragStartY = e.offsetY + offsetY; });
+canvas.addEventListener('mousemove', e => {
+  if (dragging) {
+    offsetX = e.offsetX - dragStartX;
+    offsetY = -(e.offsetY - dragStartY);
+    draw();
+  }
+  const [gx, gy] = screenToGrid(e.offsetX, e.offsetY);
+  document.getElementById('sb-pos').textContent = `X: ${gx} Y: ${gy}`;
+  const info = cellMap[gx+','+gy];
+  if (info) {
+    tooltip.style.display = 'block';
+    tooltip.style.left = (e.offsetX + 15) + 'px';
+    tooltip.style.top = (e.offsetY + 15) + 'px';
+    tooltip.querySelector('.tt-title').textContent = info.iid;
+    tooltip.querySelector('.tt-row').textContent = `模板: ${info.tpl} | 位姿: #${info.pose_idx}`;
+  } else {
+    tooltip.style.display = 'none';
+  }
+});
+canvas.addEventListener('mouseup', () => { dragging = false; });
+canvas.addEventListener('mouseleave', () => { dragging = false; tooltip.style.display = 'none'; });
+
+// Layer toggles
+for (const id of ['layer-bodies','layer-power','layer-ports','layer-ghost','layer-grid']) {
+  document.getElementById(id).addEventListener('change', draw);
+}
+
+// Search
+document.getElementById('search').addEventListener('input', e => {
+  const q = e.target.value.trim().toLowerCase();
+  highlightId = q ? null : null;
+  if (q && data) {
+    for (const iid of Object.keys(data.placement_solution || {})) {
+      if (iid.toLowerCase().includes(q)) { highlightId = iid; break; }
+    }
+  }
+  draw();
+});
+
+// Load data
+async function loadData() {
+  try {
+    const [solRes, poolRes] = await Promise.all([
+      fetch('final_solution.json'), fetch('candidate_placements.json')
+    ]);
+    data = await solRes.json();
+    pools = await poolRes.json();
+    buildCellMap();
+    updateStats();
+    // Center view
+    scale = Math.min(canvas.width / GRID_W, canvas.height / GRID_H) * 0.9;
+    offsetX = (canvas.width - GRID_W * scale) / 2;
+    offsetY = (canvas.height - GRID_H * scale) / 2;
+    draw();
+  } catch(e) {
+    ctx.fillStyle = '#8b949e';
+    ctx.font = '16px system-ui';
+    ctx.fillText('⚠️ 加载数据失败: ' + e.message, 20, 40);
+    ctx.fillText('请确保 final_solution.json 和 candidate_placements.json 在同一目录', 20, 65);
+  }
+}
+
+window.addEventListener('resize', resize);
+resize();
+loadData();
+</script>
+</body>
+</html>

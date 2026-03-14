@@ -197,26 +197,30 @@ data/
 - `data/preprocessed/port_budget.json`
 - `data/preprocessed/all_facility_instances.json`
 
-### 6.3 几何层门禁【🔒 锁定中】
+### 6.3 几何层门禁【✅ 已放行】
 
-在以下文件未重写并通过测试前，禁止继续扩展 `master_model.py`：
+以下文件已通过递归审查并升格为 `FROZEN`，供主模型层直接调用：
 
 - `src/placement/placement_generator.py`
 - `src/placement/occupancy_masks.py`
 - `src/placement/symmetry_breaking.py`
+- `src/tests/test_placements.py`
+- `data/preprocessed/candidate_placements.json`
 
-### 6.4 主问题门禁【🔒 锁定中】
+### 6.4 主问题门禁【✅ 已放行】
 
-在以下条件未满足前，禁止把 `master_model.py`、`outer_search.py` 当作 exact 主线：
+以下文件已通过审查并升格为 `FROZEN`：
 
-1. 01 章目标函数已冻结；
-2. 05 章 optional instance 语义已冻结；
-3. 10 章 cut 接口与持久化协议已冻结；
-4. 所有 provisional 上界已隔离，不会污染 exact 路径。
+- `src/models/master_model.py`
+- `src/models/flow_subproblem.py`
+- `src/models/cut_manager.py`
+- `src/tests/test_master.py`
 
-### 6.5 路由层门禁【🔒 锁定中】
+已知规模问题：供电蕴含约束 O(10^9) LHS terms，待未来恢复式优化。
 
-在 `specs/09_exact_grid_routing_subproblem.md` 重写冻结前，禁止开始正式实现 `src/models/routing_subproblem.py`。
+### 6.5 路由层门禁【✅ 已放行】
+
+`src/models/routing_subproblem.py` 已编写并 FROZEN。基于 CP-SAT 3D 离散路由模型。
 
 ---
 
@@ -279,12 +283,31 @@ data/
 ~~5. 编写 `src/tests/test_demand.py`。~~  
 ~~6. 重写 `src/preprocess/instance_builder.py`，明确 mandatory / optional / provisional 边界。~~
 
-### 第 3 组（几何层） - 🚧 当前激活阶段
+### 第 3 组（几何层） - ✅ 已全部完成
 
-7. 重写 `src/placement/placement_generator.py`，修正 pool key、边界遍历与过强剪枝。
-8. 编写 `src/placement/occupancy_masks.py`
-9. 编写 `src/placement/symmetry_breaking.py`
-10. 编写 `src/tests/test_placements.py`
+~~7. 重写 `src/placement/placement_generator.py`~~
+~~8. 编写 `src/placement/occupancy_masks.py`~~
+~~9. 编写 `src/placement/symmetry_breaking.py`~~
+~~10. 编写 `src/tests/test_placements.py`~~
+
+### 第 4 组（主模型层） - ✅ BUILD 完成，待审查
+
+~~11. 重写 `src/models/master_model.py`~~
+~~12. 编写 `src/models/flow_subproblem.py`~~
+~~13. 编写 `src/models/cut_manager.py`~~
+~~14. 编写 `src/tests/test_master.py`~~
+
+### 第 5 组（路由层 + 搜索引擎） - ✅ 完成
+
+~~15. 编写 `src/models/routing_subproblem.py`~~
+~~16. 编写 `src/search/benders_loop.py`~~
+~~17. 编写 `src/search/outer_search.py`~~
+~~18. 编写 `src/tests/test_routing.py`~~
+
+### 第 6 组（输出 + 集成） - ✅ 完成
+
+~~19. 编写 `src/render/blueprint_exporter.py`~~
+~~20. 编写 `src/tests/test_regression.py`~~
 
 ---
 
@@ -293,3 +316,11 @@ data/
 本文件自写入仓库起立即生效。
 
 凡与历史聊天、旧草稿、临时代码、未审查 AI 输出相冲突之处，一律以本文件和 `FILE_STATUS.md` 的联合定义为准。
+
+---
+
+用户手加的说明补充：
+我的电脑配置是13900ks（关了超线程）
+海力士 ddr5 m-die 7600 24x2
+
+---

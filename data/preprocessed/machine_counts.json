@@ -1,0 +1,19 @@
+{
+  "packaging_battery": 3,
+  "filling_capsule": 3,
+  "parts_maker": 6,
+  "molding_bottle": 6,
+  "grinder_dense_source": 9,
+  "grinder_fine_buckwheat": 6,
+  "refinery_steel": 17,
+  "grinder_dense_blue_iron": 17,
+  "crusher_source": 18,
+  "crusher_buckwheat": 6,
+  "crusher_sandleaf": 11,
+  "crusher_blue_iron": 34,
+  "refinery_blue_iron": 34,
+  "planter_buckwheat": 11,
+  "seed_collector_buckwheat": 6,
+  "planter_sandleaf": 21,
+  "seed_collector_sandleaf": 11
+}

@@ -1,0 +1,130 @@
+{
+  "$schema": "./canonical_rules.schema.json",
+  "metadata": {
+    "version": "1.0.0",
+    "description": "Canonical static rules and facility templates for Arknights: Endfield. Frozen truths only."
+  },
+  "globals": {
+    "grid": {
+      "width": 70,
+      "height": 70
+    },
+    "time": {
+      "tick_interval_seconds": 2.0
+    },
+    "logistics": {
+      "belt_capacity_per_tick": 1.0,
+      "port_max_throughput_per_tick": 1.0,
+      "machine_min_clearance_cells": 1
+    }
+  },
+  "routing_rules": {
+    "layers": {
+      "ground": 0,
+      "elevated": 1
+    },
+    "bridge_mechanics": {
+      "can_overlap_solid": false,
+      "can_overlap_straight_belt": true,
+      "can_overlap_curved_belt": false,
+      "can_overlap_splitter_merger": false,
+      "can_turn": false
+    }
+  },
+  "facility_templates": {
+    "manufacturing_3x3": {
+      "dimensions": {"w": 3, "h": 3},
+      "rotatable": true,
+      "needs_power": true,
+      "is_solid_z": true,
+      "port_rule": "opposite_parallel_sides"
+    },
+    "manufacturing_5x5": {
+      "dimensions": {"w": 5, "h": 5},
+      "rotatable": true,
+      "needs_power": true,
+      "is_solid_z": true,
+      "port_rule": "opposite_parallel_sides"
+    },
+    "manufacturing_6x4": {
+      "dimensions": {"w": 6, "h": 4},
+      "rotatable": true,
+      "needs_power": true,
+      "is_solid_z": true,
+      "port_rule": "long_sides"
+    },
+    "protocol_core": {
+      "dimensions": {"w": 9, "h": 9},
+      "rotatable": true,
+      "needs_power": false,
+      "is_solid_z": true,
+      "port_rule": "core_specific",
+      "core_limits": {
+        "max_outputs": 6,
+        "max_inputs": 14
+      }
+    },
+    "protocol_storage_box": {
+      "dimensions": {"w": 3, "h": 3},
+      "rotatable": true,
+      "needs_power": true,
+      "is_solid_z": true,
+      "port_rule": "omni_wireless"
+    },
+    "power_pole": {
+      "dimensions": {"w": 2, "h": 2},
+      "rotatable": false,
+      "needs_power": false,
+      "is_solid_z": true,
+      "port_rule": "none",
+      "power_coverage_radius": 5
+    },
+    "boundary_storage_port": {
+      "dimensions": {"w": 1, "h": 3},
+      "rotatable": true,
+      "needs_power": false,
+      "is_solid_z": true,
+      "port_rule": "inward_facing",
+      "placement_rule": "left_or_bottom_boundary"
+    }
+  },
+  "recipes": {
+    "water_pump_basic": {
+      "template": "manufacturing_5x5",
+      "ticks_per_cycle": 1,
+      "inputs": {},
+      "outputs": {
+        "raw_water": 1.0
+      }
+    },
+    "hydroponics_basic": {
+      "template": "manufacturing_5x5",
+      "ticks_per_cycle": 1,
+      "inputs": {},
+      "outputs": {
+        "organic_matter": 0.5
+      }
+    },
+    "crusher_blue_iron": {
+      "template": "manufacturing_5x5",
+      "ticks_per_cycle": 1,
+      "inputs": {
+        "blue_iron_ore": 1.0
+      },
+      "outputs": {
+        "blue_iron_powder": 1.0
+      }
+    },
+    "smelter_steel": {
+      "template": "manufacturing_3x3",
+      "ticks_per_cycle": 1,
+      "inputs": {
+        "blue_iron_powder": 1.0,
+        "carbon": 0.5
+      },
+      "outputs": {
+        "steel_ingot": 0.5
+      }
+    }
+  }
+}
