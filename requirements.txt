@@ -1,0 +1,8 @@
+ortools
+pytest
+jsonschema
+pydantic>=2
+numpy
+matplotlib
+Pillow
+psutil

@@ -11,9 +11,21 @@ fixed.
 from __future__ import annotations
 
 from itertools import combinations, product
-from typing import Any, Dict, Iterable, List, Mapping, Sequence
+from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 from src.preprocess.operation_profiles import get_operation_port_profile
+
+PortCell = Dict[str, Any]
+SideBinding = List[PortCell]
+BindingDomain = List[Dict[str, SideBinding]]
+SideBindingPattern = Tuple[Tuple[int, str], ...]
+BindingPattern = Tuple[SideBindingPattern, SideBindingPattern]
+PoseBindingCacheKey = Tuple[
+    str,
+    Tuple[Tuple[int, int, str], ...],
+    Tuple[Tuple[int, int, str], ...],
+]
+_POSE_LEVEL_BINDING_CACHE: Dict[PoseBindingCacheKey, Tuple[BindingPattern, ...]] = {}
 
 
 def supports_exact_pose_level_binding(operation_type: str) -> bool:
@@ -21,11 +33,14 @@ def supports_exact_pose_level_binding(operation_type: str) -> bool:
     return profile.generic_input_slots == 0 and profile.generic_output_slots == 0
 
 
-def enumerate_pose_level_port_bindings(
+def clear_pose_level_binding_domain_cache() -> None:
+    _POSE_LEVEL_BINDING_CACHE.clear()
+
+
+def enumerate_pose_level_port_bindings_with_cache_info(
     operation_type: str,
     pose: Mapping[str, Any],
-) -> List[Dict[str, List[Dict[str, Any]]]]:
-    """Enumerate all legal commodity assignments for one placed pose."""
+) -> Tuple[BindingDomain, bool]:
     profile = get_operation_port_profile(operation_type)
     if profile.generic_input_slots or profile.generic_output_slots:
         raise ValueError(
@@ -33,45 +48,113 @@ def enumerate_pose_level_port_bindings(
             "must be decided by a higher-level assignment model."
         )
 
-    input_bindings = _enumerate_side_bindings(
-        pose.get("input_port_cells", []),
-        profile.input_slots,
-        port_type="input",
-    )
-    output_bindings = _enumerate_side_bindings(
-        pose.get("output_port_cells", []),
-        profile.output_slots,
-        port_type="output",
-    )
+    ordered_input_cells = _ordered_port_cells(pose.get("input_port_cells", []))
+    ordered_output_cells = _ordered_port_cells(pose.get("output_port_cells", []))
+    cache_key = _pose_binding_cache_key(operation_type, ordered_input_cells, ordered_output_cells)
 
-    bindings: List[Dict[str, List[Dict[str, Any]]]] = []
-    for in_ports, out_ports in product(input_bindings, output_bindings):
-        bindings.append({
-            "input_ports": in_ports,
-            "output_ports": out_ports,
-            "active_ports": in_ports + out_ports,
-        })
+    patterns = _POSE_LEVEL_BINDING_CACHE.get(cache_key)
+    cache_hit = patterns is not None
+    if patterns is None:
+        input_patterns = _enumerate_side_binding_patterns(
+            len(ordered_input_cells),
+            profile.input_slots,
+            port_type="input",
+        )
+        output_patterns = _enumerate_side_binding_patterns(
+            len(ordered_output_cells),
+            profile.output_slots,
+            port_type="output",
+        )
+        patterns = tuple(product(input_patterns, output_patterns))
+        _POSE_LEVEL_BINDING_CACHE[cache_key] = patterns
+
+    bindings: BindingDomain = []
+    for input_pattern, output_pattern in patterns:
+        input_ports = _materialize_side_binding(
+            ordered_input_cells,
+            input_pattern,
+            port_type="input",
+        )
+        output_ports = _materialize_side_binding(
+            ordered_output_cells,
+            output_pattern,
+            port_type="output",
+        )
+        bindings.append(
+            {
+                "input_ports": input_ports,
+                "output_ports": output_ports,
+                "active_ports": input_ports + output_ports,
+            }
+        )
+    return bindings, cache_hit
+
+
+def enumerate_pose_level_port_bindings(
+    operation_type: str,
+    pose: Mapping[str, Any],
+) -> List[Dict[str, List[Dict[str, Any]]]]:
+    """Enumerate all legal commodity assignments for one placed pose."""
+    bindings, _cache_hit = enumerate_pose_level_port_bindings_with_cache_info(
+        operation_type,
+        pose,
+    )
     return bindings
 
 
-def _enumerate_side_bindings(
+def _ordered_port_cells(
     port_cells: Sequence[Mapping[str, Any]],
-    slot_counts: Mapping[str, int],
-    port_type: str,
-) -> List[List[Dict[str, Any]]]:
+) -> List[PortCell]:
     ordered_cells = [_normalize_port_cell(port) for port in port_cells]
     ordered_cells.sort(key=lambda item: (item["x"], item["y"], item["dir"]))
+    return ordered_cells
 
+
+def _pose_binding_cache_key(
+    operation_type: str,
+    ordered_input_cells: Sequence[PortCell],
+    ordered_output_cells: Sequence[PortCell],
+) -> PoseBindingCacheKey:
+    all_cells = [*ordered_input_cells, *ordered_output_cells]
+    if all_cells:
+        origin_x = min(int(cell["x"]) for cell in all_cells)
+        origin_y = min(int(cell["y"]) for cell in all_cells)
+    else:
+        origin_x = 0
+        origin_y = 0
+
+    def _normalize_side_signature(cells: Sequence[PortCell]) -> Tuple[Tuple[int, int, str], ...]:
+        return tuple(
+            (
+                int(cell["x"]) - origin_x,
+                int(cell["y"]) - origin_y,
+                str(cell["dir"]),
+            )
+            for cell in cells
+        )
+
+    return (
+        str(operation_type),
+        _normalize_side_signature(ordered_input_cells),
+        _normalize_side_signature(ordered_output_cells),
+    )
+
+
+def _enumerate_side_binding_patterns(
+    ordered_cell_count: int,
+    slot_counts: Mapping[str, int],
+    port_type: str,
+) -> List[SideBindingPattern]:
     required = [(commodity, count) for commodity, count in slot_counts.items() if count > 0]
     total_slots = sum(count for _, count in required)
-    if total_slots > len(ordered_cells):
+    if total_slots > ordered_cell_count:
         raise ValueError(
-            f"{port_type} ports are insufficient: need {total_slots}, have {len(ordered_cells)}"
+            f"{port_type} ports are insufficient: need {total_slots}, have {ordered_cell_count}"
         )
     if not required:
-        return [[]]
+        return [tuple()]
 
-    results: List[List[Dict[str, Any]]] = []
+    results: List[SideBindingPattern] = []
 
     def backtrack(
         req_idx: int,
@@ -79,17 +162,9 @@ def _enumerate_side_bindings(
         chosen: Dict[int, str],
     ) -> None:
         if req_idx >= len(required):
-            binding = [
-                {
-                    "type": port_type,
-                    "commodity": chosen[idx],
-                    "x": ordered_cells[idx]["x"],
-                    "y": ordered_cells[idx]["y"],
-                    "dir": ordered_cells[idx]["dir"],
-                }
-                for idx in sorted(chosen)
-            ]
-            results.append(binding)
+            results.append(
+                tuple((idx, str(chosen[idx])) for idx in sorted(chosen))
+            )
             return
 
         commodity, count = required[req_idx]
@@ -100,8 +175,26 @@ def _enumerate_side_bindings(
             next_remaining = [idx for idx in remaining_indices if idx not in combo]
             backtrack(req_idx + 1, next_remaining, next_chosen)
 
-    backtrack(0, list(range(len(ordered_cells))), {})
+    backtrack(0, list(range(ordered_cell_count)), {})
     return results
+
+
+def _materialize_side_binding(
+    ordered_cells: Sequence[PortCell],
+    binding_pattern: SideBindingPattern,
+    *,
+    port_type: str,
+) -> SideBinding:
+    return [
+        {
+            "type": port_type,
+            "commodity": commodity,
+            "x": int(ordered_cells[idx]["x"]),
+            "y": int(ordered_cells[idx]["y"]),
+            "dir": str(ordered_cells[idx]["dir"]),
+        }
+        for idx, commodity in binding_pattern
+    ]
 
 
 def _normalize_port_cell(port: Mapping[str, Any]) -> Dict[str, Any]:

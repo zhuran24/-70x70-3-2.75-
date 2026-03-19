@@ -1,18 +1,17 @@
 """
 Exact grid-routing subproblem.
 
-This version extends the ground-layer routing state space beyond simple 1-in/1-out
-belts so that the model can represent splitters and mergers, which are required by
-the original frozen rules whenever one commodity's discrete source/sink port counts
-do not match.
+This version keeps the exact state semantics, but shrinks the routing core to the
+commodity-scoped terminal-connected domain before building CP-SAT variables.
 """
 
 from __future__ import annotations
 
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
+from dataclasses import dataclass
 from itertools import combinations
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from ortools.sat.python import cp_model
 
@@ -29,6 +28,57 @@ ELEVATED_LAYER = 1
 RouteStateKey = Tuple[int, int, int, Tuple[str, ...], Tuple[str, ...], str]
 
 
+@dataclass
+class RoutingPlacementCore:
+    occupied_cells: Set[Tuple[int, int]]
+    occupied_owner_by_cell: Dict[Tuple[int, int], str]
+    free_cells: Set[Tuple[int, int]]
+    free_neighbors_by_cell: Dict[Tuple[int, int], Tuple[Tuple[int, int], ...]]
+    component_by_cell: Dict[Tuple[int, int], int]
+    cells_by_component: Dict[int, Set[Tuple[int, int]]]
+
+    @classmethod
+    def from_occupied_cells(
+        cls,
+        occupied_cells: Set[Tuple[int, int]],
+        *,
+        occupied_owner_by_cell: Optional[Mapping[Tuple[int, int], str]] = None,
+    ) -> "RoutingPlacementCore":
+        occupied = {(int(x), int(y)) for x, y in occupied_cells}
+        owner_map = {
+            (int(cell[0]), int(cell[1])): str(owner)
+            for cell, owner in dict(occupied_owner_by_cell or {}).items()
+        }
+        free_cells: Set[Tuple[int, int]] = set()
+        for x in range(GRID_W):
+            for y in range(GRID_H):
+                if (x, y) not in occupied:
+                    free_cells.add((x, y))
+
+        free_neighbors_by_cell = {
+            cell: tuple(
+                sorted(
+                    neighbor
+                    for neighbor in _cell_neighbors(cell)
+                    if neighbor in free_cells
+                )
+            )
+            for cell in free_cells
+        }
+        component_by_cell, cells_by_component = _compute_free_components(
+            free_cells,
+            free_neighbors_by_cell=free_neighbors_by_cell,
+        )
+        return cls(
+            occupied_cells=occupied,
+            occupied_owner_by_cell=owner_map,
+            free_cells=free_cells,
+            free_neighbors_by_cell=free_neighbors_by_cell,
+            component_by_cell=component_by_cell,
+            cells_by_component=cells_by_component,
+        )
+
+
 def _dirs_tag(dirs: Iterable[str]) -> str:
     ordered = list(dirs)
     return "".join(ordered) if ordered else "none"
@@ -42,6 +92,379 @@ def _is_straight_state(flow_in: Tuple[str, ...], flow_out: Tuple[str, ...]) -> b
     )
 
 
+def _sorted_cells(cells: Iterable[Tuple[int, int]]) -> List[List[int]]:
+    return [[int(x), int(y)] for x, y in sorted(cells)]
+
+
+def _cell_neighbors(cell: Tuple[int, int]) -> List[Tuple[int, int]]:
+    x, y = cell
+    neighbors: List[Tuple[int, int]] = []
+    for dx, dy in DIR_DELTA.values():
+        nx, ny = x + dx, y + dy
+        if 0 <= nx < GRID_W and 0 <= ny < GRID_H:
+            neighbors.append((nx, ny))
+    return neighbors
+
+
+def _compute_free_components(
+    free_cells: Set[Tuple[int, int]],
+    *,
+    free_neighbors_by_cell: Optional[Mapping[Tuple[int, int], Sequence[Tuple[int, int]]]] = None,
+) -> Tuple[Dict[Tuple[int, int], int], Dict[int, Set[Tuple[int, int]]]]:
+    component_by_cell: Dict[Tuple[int, int], int] = {}
+    cells_by_component: Dict[int, Set[Tuple[int, int]]] = {}
+    component_id = 0
+
+    for cell in free_cells:
+        if cell in component_by_cell:
+            continue
+        stack = [cell]
+        component_by_cell[cell] = component_id
+        component_cells: Set[Tuple[int, int]] = {cell}
+        while stack:
+            current = stack.pop()
+            neighbors = (
+                free_neighbors_by_cell.get(current, ())
+                if free_neighbors_by_cell is not None
+                else _cell_neighbors(current)
+            )
+            for neighbor in neighbors:
+                if neighbor not in free_cells or neighbor in component_by_cell:
+                    continue
+                component_by_cell[neighbor] = component_id
+                component_cells.add(neighbor)
+                stack.append(neighbor)
+        cells_by_component[component_id] = component_cells
+        component_id += 1
+
+    return component_by_cell, cells_by_component
+
+
+def _peel_terminal_core(
+    component_cells: Set[Tuple[int, int]],
+    terminal_cells: Set[Tuple[int, int]],
+    *,
+    free_neighbors_by_cell: Optional[Mapping[Tuple[int, int], Sequence[Tuple[int, int]]]] = None,
+) -> Set[Tuple[int, int]]:
+    if not component_cells:
+        return set()
+
+    neighbor_map: Dict[Tuple[int, int], Set[Tuple[int, int]]] = {}
+    degree: Dict[Tuple[int, int], int] = {}
+    for cell in component_cells:
+        base_neighbors = (
+            free_neighbors_by_cell.get(cell, ())
+            if free_neighbors_by_cell is not None
+            else _cell_neighbors(cell)
+        )
+        neighbors = {neighbor for neighbor in base_neighbors if neighbor in component_cells}
+        neighbor_map[cell] = neighbors
+        degree[cell] = len(neighbors)
+
+    removed: Set[Tuple[int, int]] = set()
+    queue = deque(
+        cell
+        for cell in component_cells
+        if cell not in terminal_cells and degree.get(cell, 0) < 2
+    )
+    while queue:
+        cell = queue.popleft()
+        if cell in removed or cell in terminal_cells:
+            continue
+        if degree.get(cell, 0) >= 2:
+            continue
+        removed.add(cell)
+        for neighbor in neighbor_map.get(cell, set()):
+            if neighbor in removed:
+                continue
+            degree[neighbor] = degree.get(neighbor, 0) - 1
+            if neighbor not in terminal_cells and degree.get(neighbor, 0) < 2:
+                queue.append(neighbor)
+
+    return {cell for cell in component_cells if cell not in removed}
+
+
+def _empty_domain_stats() -> Dict[str, Any]:
+    return {
+        "commodity_component_cells": {},
+        "commodity_active_cells": {},
+        "commodity_terminal_cells": {},
+        "domain_cells": 0,
+        "terminal_core_cells": 0,
+        "front_terminal_cells": 0,
+        "blocked_ports": 0,
+        "disconnected_commodity_count": 0,
+    }
+
+
+def _resolve_routing_domain_context(
+    *,
+    grid: Optional["RoutingGrid"] = None,
+    placement_core: Optional[RoutingPlacementCore] = None,
+    port_specs: Optional[Sequence[Mapping[str, Any]]] = None,
+    occupied_owner_by_cell: Optional[Mapping[Tuple[int, int], str]] = None,
+) -> Tuple[
+    Optional["RoutingGrid"],
+    List[Dict[str, Any]],
+    Set[Tuple[int, int]],
+    Dict[Tuple[int, int], str],
+    Dict[Tuple[int, int], int],
+    Dict[int, Set[Tuple[int, int]]],
+    Optional[Mapping[Tuple[int, int], Sequence[Tuple[int, int]]]],
+]:
+    resolved_grid = grid
+    resolved_core = placement_core
+    if resolved_grid is None and resolved_core is None:
+        raise ValueError("analyze_exact_routing_domain requires either grid or placement_core")
+
+    if resolved_grid is not None:
+        if resolved_core is None:
+            resolved_core = getattr(resolved_grid, "placement_core", None)
+        resolved_port_specs = [dict(spec) for spec in resolved_grid.port_specs]
+    else:
+        resolved_port_specs = [dict(spec) for spec in list(port_specs or [])]
+
+    if resolved_core is not None:
+        owner_map = dict(resolved_core.occupied_owner_by_cell)
+        if occupied_owner_by_cell is not None:
+            owner_map.update(
+                {
+                    (int(cell[0]), int(cell[1])): str(owner)
+                    for cell, owner in dict(occupied_owner_by_cell).items()
+                }
+            )
+        return (
+            resolved_grid,
+            resolved_port_specs,
+            set(resolved_core.free_cells),
+            owner_map,
+            dict(resolved_core.component_by_cell),
+            {
+                int(component_id): set(cells)
+                for component_id, cells in resolved_core.cells_by_component.items()
+            },
+            dict(resolved_core.free_neighbors_by_cell),
+        )
+
+    resolved_free_cells = set(getattr(resolved_grid, "free_cells", set()))
+    owner_map = {
+        (int(cell[0]), int(cell[1])): str(owner)
+        for cell, owner in dict(
+            occupied_owner_by_cell
+            if occupied_owner_by_cell is not None
+            else getattr(resolved_grid, "occupied_owner_by_cell", {})
+        ).items()
+    }
+    component_by_cell, cells_by_component = _compute_free_components(resolved_free_cells)
+    return (
+        resolved_grid,
+        resolved_port_specs,
+        resolved_free_cells,
+        owner_map,
+        component_by_cell,
+        cells_by_component,
+        None,
+    )
+
+
+def analyze_exact_routing_domain(
+    grid: Optional["RoutingGrid"] = None,
+    *,
+    placement_core: Optional[RoutingPlacementCore] = None,
+    port_specs: Optional[Sequence[Mapping[str, Any]]] = None,
+    occupied_owner_by_cell: Optional[Dict[Tuple[int, int], str]] = None,
+) -> Dict[str, Any]:
+    _resolved_grid, resolved_port_specs, resolved_free_cells, resolved_owner_map, component_by_cell, cells_by_component, free_neighbors_by_cell = _resolve_routing_domain_context(
+        grid=grid,
+        placement_core=placement_core,
+        port_specs=port_specs,
+        occupied_owner_by_cell=occupied_owner_by_cell,
+    )
+    blocked_ports: List[Dict[str, Any]] = []
+    commodity_fronts: Dict[str, Set[Tuple[int, int]]] = defaultdict(set)
+    commodity_source_fronts: Dict[str, Set[Tuple[int, int]]] = defaultdict(set)
+    commodity_sink_fronts: Dict[str, Set[Tuple[int, int]]] = defaultdict(set)
+
+    for spec in resolved_port_specs:
+        px = int(spec["x"])
+        py = int(spec["y"])
+        direction = str(spec["dir"])
+        commodity = str(spec.get("commodity", ""))
+        dx, dy = DIR_DELTA[direction]
+        fx, fy = px + dx, py + dy
+        front_cell = (fx, fy)
+
+        in_grid = 0 <= fx < GRID_W and 0 <= fy < GRID_H
+        if not in_grid or front_cell not in resolved_free_cells:
+            conflict_ids: List[str] = []
+            instance_id = str(spec.get("instance_id", ""))
+            if instance_id:
+                conflict_ids.append(instance_id)
+
+            blocking_instance_id = resolved_owner_map.get(front_cell)
+            if blocking_instance_id and blocking_instance_id not in conflict_ids:
+                conflict_ids.append(str(blocking_instance_id))
+
+            blocked_ports.append(
+                {
+                    "instance_id": instance_id,
+                    "commodity": commodity,
+                    "dir": direction,
+                    "front_cell": [fx, fy],
+                    "blocking_instance_ids": (
+                        []
+                        if blocking_instance_id is None
+                        else [str(blocking_instance_id)]
+                    ),
+                    "placement_level_conflict_set": conflict_ids,
+                }
+            )
+            continue
+
+        commodity_fronts[commodity].add(front_cell)
+        if str(spec["type"]) == "out":
+            commodity_source_fronts[commodity].add(front_cell)
+        else:
+            commodity_sink_fronts[commodity].add(front_cell)
+
+    commodity_front_metadata = {
+        commodity: {
+            "front_cells": _sorted_cells(fronts),
+            "source_front_cells": _sorted_cells(commodity_source_fronts.get(commodity, set())),
+            "sink_front_cells": _sorted_cells(commodity_sink_fronts.get(commodity, set())),
+        }
+        for commodity, fronts in sorted(commodity_fronts.items())
+    }
+
+    if blocked_ports:
+        placement_level_conflict_set: List[str] = []
+        for blocked in blocked_ports:
+            for instance_id in blocked["placement_level_conflict_set"]:
+                if instance_id not in placement_level_conflict_set:
+                    placement_level_conflict_set.append(instance_id)
+        domain_stats = _empty_domain_stats()
+        domain_stats["blocked_ports"] = len(blocked_ports)
+        return {
+            "status": "front_blocked",
+            "binding_selection_safe_reject": True,
+            "placement_level_conflict_set": placement_level_conflict_set,
+            "blocked_ports": blocked_ports,
+            "disconnected_commodities": [],
+            "commodity_front_metadata": commodity_front_metadata,
+            "commodity_component_cells": {},
+            "commodity_active_cells": {},
+            "domain_stats": domain_stats,
+        }
+
+    disconnected_commodities: List[Dict[str, Any]] = []
+    commodity_component_cells: Dict[str, Set[Tuple[int, int]]] = {}
+    commodity_active_cells: Dict[str, Set[Tuple[int, int]]] = {}
+
+    for commodity, front_cells in sorted(commodity_fronts.items()):
+        component_ids = {component_by_cell.get(cell, -1) for cell in front_cells}
+        if len(component_ids) > 1:
+            disconnected_commodities.append(
+                {
+                    "commodity": commodity,
+                    "front_cells": _sorted_cells(front_cells),
+                    "component_ids": sorted(component_ids),
+                }
+            )
+            commodity_component_cells[commodity] = set()
+            commodity_active_cells[commodity] = set()
+            continue
+
+        component_id = next(iter(component_ids), -1)
+        component_cells = set(cells_by_component.get(component_id, set()))
+        commodity_component_cells[commodity] = component_cells
+        commodity_active_cells[commodity] = _peel_terminal_core(
+            component_cells,
+            set(front_cells),
+            free_neighbors_by_cell=free_neighbors_by_cell,
+        )
+
+    domain_stats = {
+        "commodity_component_cells": {
+            commodity: len(cells)
+            for commodity, cells in sorted(commodity_component_cells.items())
+        },
+        "commodity_active_cells": {
+            commodity: len(cells)
+            for commodity, cells in sorted(commodity_active_cells.items())
+        },
+        "commodity_terminal_cells": {
+            commodity: len(commodity_fronts.get(commodity, set()))
+            for commodity in sorted(commodity_fronts)
+        },
+        "domain_cells": sum(len(cells) for cells in commodity_component_cells.values()),
+        "terminal_core_cells": sum(len(cells) for cells in commodity_active_cells.values()),
+        "front_terminal_cells": sum(len(cells) for cells in commodity_fronts.values()),
+        "blocked_ports": 0,
+        "disconnected_commodity_count": len(disconnected_commodities),
+    }
+
+    if disconnected_commodities:
+        return {
+            "status": "relaxed_disconnected",
+            "binding_selection_safe_reject": True,
+            "placement_level_conflict_set": [],
+            "blocked_ports": [],
+            "disconnected_commodities": disconnected_commodities,
+            "commodity_front_metadata": commodity_front_metadata,
+            "commodity_component_cells": {
+                commodity: _sorted_cells(cells)
+                for commodity, cells in sorted(commodity_component_cells.items())
+            },
+            "commodity_active_cells": {
+                commodity: _sorted_cells(cells)
+                for commodity, cells in sorted(commodity_active_cells.items())
+            },
+            "domain_stats": domain_stats,
+        }
+
+    return {
+        "status": "feasible",
+        "binding_selection_safe_reject": False,
+        "placement_level_conflict_set": [],
+        "blocked_ports": [],
+        "disconnected_commodities": [],
+        "commodity_front_metadata": commodity_front_metadata,
+        "commodity_component_cells": {
+            commodity: _sorted_cells(cells)
+            for commodity, cells in sorted(commodity_component_cells.items())
+        },
+        "commodity_active_cells": {
+            commodity: _sorted_cells(cells)
+            for commodity, cells in sorted(commodity_active_cells.items())
+        },
+        "domain_stats": domain_stats,
+    }
+
+
+def run_exact_routing_precheck(
+    grid: Optional["RoutingGrid"] = None,
+    *,
+    placement_core: Optional[RoutingPlacementCore] = None,
+    port_specs: Optional[Sequence[Mapping[str, Any]]] = None,
+    occupied_owner_by_cell: Optional[Dict[Tuple[int, int], str]] = None,
+) -> Dict[str, Any]:
+    analysis = analyze_exact_routing_domain(
+        grid,
+        placement_core=placement_core,
+        port_specs=port_specs,
+        occupied_owner_by_cell=occupied_owner_by_cell,
+    )
+    return {
+        "status": str(analysis["status"]),
+        "binding_selection_safe_reject": bool(analysis["binding_selection_safe_reject"]),
+        "placement_level_conflict_set": list(analysis.get("placement_level_conflict_set", [])),
+        "blocked_ports": list(analysis.get("blocked_ports", [])),
+        "disconnected_commodities": list(analysis.get("disconnected_commodities", [])),
+        "domain_stats": dict(analysis.get("domain_stats", {})),
+        "_analysis": analysis,
+    }
+
+
 class RoutingGrid:
     """3D grid domain for the routing subproblem."""
 
@@ -49,14 +472,21 @@ class RoutingGrid:
         self,
         occupied_cells: Set[Tuple[int, int]],
         port_specs: List[Dict[str, Any]],
+        *,
+        occupied_owner_by_cell: Optional[Mapping[Tuple[int, int], str]] = None,
     ):
-        self.occupied = occupied_cells
-        self.port_specs = port_specs
+        self.occupied = {(int(x), int(y)) for x, y in occupied_cells}
+        self.port_specs = [dict(spec) for spec in port_specs]
+        self.occupied_owner_by_cell = {
+            (int(cell[0]), int(cell[1])): str(owner)
+            for cell, owner in dict(occupied_owner_by_cell or {}).items()
+        }
+        self.placement_core: Optional[RoutingPlacementCore] = None
 
         self.free_cells: Set[Tuple[int, int]] = set()
         for x in range(GRID_W):
             for y in range(GRID_H):
-                if (x, y) not in occupied_cells:
+                if (x, y) not in self.occupied:
                     self.free_cells.add((x, y))
 
         self.port_cells: Set[Tuple[int, int]] = set()
@@ -64,6 +494,25 @@ class RoutingGrid:
             self.port_cells.add((int(ps["x"]), int(ps["y"])))
 
         self.routable_cells = self.free_cells | self.port_cells
+
+    @classmethod
+    def from_placement_core(
+        cls,
+        placement_core: RoutingPlacementCore,
+        port_specs: Sequence[Mapping[str, Any]],
+    ) -> "RoutingGrid":
+        grid = cls.__new__(cls)
+        grid.occupied = set(placement_core.occupied_cells)
+        grid.port_specs = [dict(spec) for spec in port_specs]
+        grid.occupied_owner_by_cell = dict(placement_core.occupied_owner_by_cell)
+        grid.placement_core = placement_core
+        grid.free_cells = set(placement_core.free_cells)
+        grid.port_cells = {
+            (int(ps["x"]), int(ps["y"]))
+            for ps in grid.port_specs
+        }
+        grid.routable_cells = grid.free_cells | grid.port_cells
+        return grid
 
     def neighbors(self, x: int, y: int) -> List[Tuple[int, int, str]]:
         result = []
@@ -77,8 +526,19 @@ class RoutingGrid:
 class RoutingSubproblem:
     """CP-SAT routing model with belt / splitter / merger / bridge states."""
 
-    def __init__(self, grid: RoutingGrid, commodities: List[str]):
+    def __init__(
+        self,
+        grid: RoutingGrid,
+        commodities: List[str],
+        *,
+        domain_analysis: Optional[Mapping[str, Any]] = None,
+    ):
         self.grid = grid
+        self._placement_core: Optional[RoutingPlacementCore] = getattr(
+            grid,
+            "placement_core",
+            None,
+        )
         self.commodities = commodities
         self.model = cp_model.CpModel()
 
@@ -99,9 +559,38 @@ class RoutingSubproblem:
         self._status = None
         self.build_stats: Dict[str, Any] = {}
 
+        self._domain_analysis: Optional[Mapping[str, Any]] = dict(domain_analysis) if domain_analysis else None
+        self._domain_stats: Dict[str, Any] = {}
+        self._commodity_active_cells: Dict[str, Set[Tuple[int, int]]] = {
+            commodity: set() for commodity in self.commodities
+        }
+        self._commodity_component_cells: Dict[str, Set[Tuple[int, int]]] = {
+            commodity: set() for commodity in self.commodities
+        }
+
         self._source_port_fronts: Dict[Tuple[int, int, str, str], int] = defaultdict(int)
         self._sink_port_fronts: Dict[Tuple[int, int, str, str], int] = defaultdict(int)
         self._index_port_fronts()
+        self._patterns_by_layer = {
+            layer: list(self._iter_state_patterns(layer))
+            for layer in LAYERS
+        }
+        self._pattern_count_per_cell = sum(len(patterns) for patterns in self._patterns_by_layer.values())
+
+    @classmethod
+    def from_placement_core(
+        cls,
+        placement_core: RoutingPlacementCore,
+        port_specs: Sequence[Mapping[str, Any]],
+        commodities: List[str],
+        *,
+        domain_analysis: Optional[Mapping[str, Any]] = None,
+    ) -> "RoutingSubproblem":
+        return cls(
+            RoutingGrid.from_placement_core(placement_core, port_specs),
+            commodities,
+            domain_analysis=domain_analysis,
+        )
 
     def _index_port_fronts(self) -> None:
         for ps in self.grid.port_specs:
@@ -118,7 +607,26 @@ class RoutingSubproblem:
                 self._sink_port_fronts[(fx, fy, direction, commodity)] += 1
 
     def build(self, time_limit: float = 60.0):
+        del time_limit
         t0 = time.time()
+        analysis = (
+            dict(self._domain_analysis)
+            if self._domain_analysis is not None
+            else analyze_exact_routing_domain(
+                self.grid,
+                placement_core=self._placement_core,
+            )
+        )
+        self._bind_domain_analysis(analysis)
+
+        if str(analysis.get("status", "feasible")) != "feasible":
+            self.model.Add(0 == 1)
+            self._record_state_space_stats(defaultdict(int), local_pattern_pruned_states=0)
+            self._add_gap_rule()
+            elapsed = time.time() - t0
+            print(f"[Routing Model] build {elapsed:.1f}s")
+            return
+
         self._create_routing_variables()
         self._add_obstacle_exclusion()
         self._add_capacity_constraints()
@@ -127,7 +635,31 @@ class RoutingSubproblem:
         self._add_port_adherence()
         self._add_gap_rule()
         elapsed = time.time() - t0
-        print(f"🔡 [Routing Model] build {elapsed:.1f}s")
+        print(f"[Routing Model] build {elapsed:.1f}s")
+
+    def _bind_domain_analysis(self, analysis: Mapping[str, Any]) -> None:
+        self._domain_analysis = dict(analysis)
+        self._domain_stats = dict(analysis.get("domain_stats", {}))
+
+        raw_component_cells = dict(analysis.get("commodity_component_cells", {}))
+        raw_active_cells = dict(analysis.get("commodity_active_cells", {}))
+        for commodity in self.commodities:
+            component_cells = {
+                (int(cell[0]), int(cell[1]))
+                for cell in raw_component_cells.get(commodity, [])
+            }
+            active_cells = {
+                (int(cell[0]), int(cell[1]))
+                for cell in raw_active_cells.get(commodity, [])
+            }
+            self._commodity_component_cells[commodity] = component_cells
+            self._commodity_active_cells[commodity] = active_cells
+
+        self.build_stats["domain_analysis"] = {
+            "status": str(analysis.get("status", "feasible")),
+            "domain_stats": dict(self._domain_stats),
+            "used_placement_core_reuse": bool(self._placement_core),
+        }
 
     def _iter_state_patterns(self, layer: int) -> Iterable[Dict[str, Any]]:
         if layer == ELEVATED_LAYER:
@@ -169,17 +701,63 @@ class RoutingSubproblem:
                         "component_type": "merger",
                     }
 
+    def _neighbor_in_active_domain(self, x: int, y: int, direction: str, commodity: str) -> bool:
+        dx, dy = DIR_DELTA[direction]
+        return (x + dx, y + dy) in self._commodity_active_cells.get(commodity, set())
+
+    def _incoming_dir_supported(self, x: int, y: int, layer: int, direction: str, commodity: str) -> bool:
+        if self._neighbor_in_active_domain(x, y, direction, commodity):
+            return True
+        if layer != GROUND_LAYER:
+            return False
+        return self._source_port_fronts.get((x, y, direction, commodity), 0) > 0
+
+    def _outgoing_dir_supported(self, x: int, y: int, layer: int, direction: str, commodity: str) -> bool:
+        if self._neighbor_in_active_domain(x, y, direction, commodity):
+            return True
+        if layer != GROUND_LAYER:
+            return False
+        return self._sink_port_fronts.get((x, y, direction, commodity), 0) > 0
+
+    def _pattern_is_locally_supported(
+        self,
+        x: int,
+        y: int,
+        layer: int,
+        commodity: str,
+        flow_in: Tuple[str, ...],
+        flow_out: Tuple[str, ...],
+    ) -> bool:
+        return all(
+            self._incoming_dir_supported(x, y, layer, direction, commodity)
+            for direction in flow_in
+        ) and all(
+            self._outgoing_dir_supported(x, y, layer, direction, commodity)
+            for direction in flow_out
+        )
+
     def _create_routing_variables(self):
         state_counter = defaultdict(int)
+        local_pattern_pruned_states = 0
 
-        for (x, y) in self.grid.free_cells:
-            for layer in LAYERS:
-                patterns = list(self._iter_state_patterns(layer))
-                for pattern in patterns:
-                    flow_in = tuple(pattern["flow_in"])
-                    flow_out = tuple(pattern["flow_out"])
-                    component_type = str(pattern["component_type"])
-                    for commodity in self.commodities:
+        for commodity in self.commodities:
+            for (x, y) in sorted(self._commodity_active_cells.get(commodity, set())):
+                for layer in LAYERS:
+                    for pattern in self._patterns_by_layer[layer]:
+                        flow_in = tuple(pattern["flow_in"])
+                        flow_out = tuple(pattern["flow_out"])
+                        component_type = str(pattern["component_type"])
+                        if not self._pattern_is_locally_supported(
+                            x,
+                            y,
+                            layer,
+                            commodity,
+                            flow_in,
+                            flow_out,
+                        ):
+                            local_pattern_pruned_states += 1
+                            continue
+
                         var = self.model.NewBoolVar(
                             f"r_{x}_{y}_{layer}_{_dirs_tag(flow_in)}_{_dirs_tag(flow_out)}_{commodity}"
                         )
@@ -203,43 +781,67 @@ class RoutingSubproblem:
                             self._l0_nonstraight_vars[(x, y)].append(var)
                         state_counter[(layer, component_type)] += 1
 
+        self._record_state_space_stats(state_counter, local_pattern_pruned_states)
+
+    def _record_state_space_stats(
+        self,
+        state_counter: Mapping[Tuple[int, str], int],
+        local_pattern_pruned_states: int,
+    ) -> None:
+        commodity_component_cells = {
+            commodity: int(self._domain_stats.get("commodity_component_cells", {}).get(commodity, 0))
+            for commodity in self.commodities
+            if commodity in self._domain_stats.get("commodity_component_cells", {})
+        }
+        commodity_active_cells = {
+            commodity: int(self._domain_stats.get("commodity_active_cells", {}).get(commodity, 0))
+            for commodity in self.commodities
+            if commodity in self._domain_stats.get("commodity_active_cells", {})
+        }
+        naive_full_domain_vars = len(self.grid.free_cells) * len(self.commodities) * self._pattern_count_per_cell
+
         self.build_stats["state_space"] = {
             "commodities": len(self.commodities),
             "vars": len(self.r_vars),
-            "ground_belt_states": state_counter[(GROUND_LAYER, "belt")],
-            "ground_splitter_states": state_counter[(GROUND_LAYER, "splitter")],
-            "ground_merger_states": state_counter[(GROUND_LAYER, "merger")],
-            "elevated_bridge_states": state_counter[(ELEVATED_LAYER, "bridge")],
+            "ground_belt_states": int(state_counter.get((GROUND_LAYER, "belt"), 0)),
+            "ground_splitter_states": int(state_counter.get((GROUND_LAYER, "splitter"), 0)),
+            "ground_merger_states": int(state_counter.get((GROUND_LAYER, "merger"), 0)),
+            "elevated_bridge_states": int(state_counter.get((ELEVATED_LAYER, "bridge"), 0)),
+            "used_placement_core_reuse": bool(self._placement_core),
+            "commodity_component_cells": commodity_component_cells,
+            "commodity_active_cells": commodity_active_cells,
+            "domain_cells": int(self._domain_stats.get("domain_cells", 0)),
+            "terminal_core_cells": int(self._domain_stats.get("terminal_core_cells", 0)),
+            "local_pattern_pruned_states": int(local_pattern_pruned_states),
+            "naive_full_domain_vars": int(naive_full_domain_vars),
         }
 
     def _add_obstacle_exclusion(self):
-        # Obstacle exclusion is implemented by only creating variables on free cells.
+        # Obstacle exclusion is implemented by only creating variables on active free cells.
         return
 
     def _add_capacity_constraints(self):
-        for (x, y) in self.grid.free_cells:
-            for layer in LAYERS:
-                vars_on_cell_layer = self._vars_by_cell_layer.get((x, y, layer), [])
-                if vars_on_cell_layer:
-                    self.model.AddAtMostOne(vars_on_cell_layer)
+        for vars_on_cell_layer in self._vars_by_cell_layer.values():
+            if vars_on_cell_layer:
+                self.model.AddAtMostOne(vars_on_cell_layer)
 
     def _add_bridge_constraints(self):
-        for (x, y) in self.grid.free_cells:
-            l1_vars = self._l1_vars.get((x, y), [])
+        for cell, l1_vars in self._l1_vars.items():
             if not l1_vars:
                 continue
-            l0_nonstraight = self._l0_nonstraight_vars.get((x, y), [])
+            l0_nonstraight = self._l0_nonstraight_vars.get(cell, [])
             if not l0_nonstraight:
                 continue
+            x, y = cell
             l1_any = self.model.NewBoolVar(f"l1_any_{x}_{y}")
             self.model.AddMaxEquality(l1_any, l1_vars)
             for var in l0_nonstraight:
                 self.model.AddImplication(l1_any, var.Not())
 
     def _add_continuity_constraints(self):
-        for (x, y) in self.grid.free_cells:
-            for layer in LAYERS:
-                for commodity in self.commodities:
+        for commodity in self.commodities:
+            for (x, y) in self._commodity_active_cells.get(commodity, set()):
+                for layer in LAYERS:
                     for d_out in DIRECTIONS:
                         self._add_successor_constraints(x, y, layer, d_out, commodity)
                     for d_in in DIRECTIONS:
@@ -262,7 +864,7 @@ class RoutingSubproblem:
 
         dx, dy = DIR_DELTA[d_out]
         nx, ny = x + dx, y + dy
-        if not (0 <= nx < GRID_W and 0 <= ny < GRID_H) or (nx, ny) not in self.grid.routable_cells:
+        if (nx, ny) not in self._commodity_active_cells.get(commodity, set()):
             for var in out_vars:
                 self.model.Add(var == 0)
             return
@@ -295,7 +897,7 @@ class RoutingSubproblem:
 
         dx, dy = DIR_DELTA[d_in]
         px, py = x + dx, y + dy
-        if not (0 <= px < GRID_W and 0 <= py < GRID_H) or (px, py) not in self.grid.routable_cells:
+        if (px, py) not in self._commodity_active_cells.get(commodity, set()):
             for var in in_vars:
                 self.model.Add(var == 0)
             return
@@ -315,14 +917,14 @@ class RoutingSubproblem:
         exact_links = 0
         blocked_ports = 0
 
-        for idx, ps in enumerate(self.grid.port_specs):
+        for ps in self.grid.port_specs:
             px, py = int(ps["x"]), int(ps["y"])
             direction = str(ps["dir"])
             commodity = str(ps["commodity"])
             dx, dy = DIR_DELTA[direction]
             fx, fy = px + dx, py + dy
 
-            if (fx, fy) not in self.grid.free_cells:
+            if (fx, fy) not in self._commodity_active_cells.get(commodity, set()):
                 self.model.Add(0 == 1)
                 blocked_ports += 1
                 continue

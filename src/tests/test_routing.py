@@ -75,7 +75,7 @@ def test_routing_supports_splitter_state(project_root):
     sys.path.insert(0, str(project_root))
     from src.models.routing_subproblem import RoutingGrid, RoutingSubproblem
 
-    allowed = {(x, y) for x in range(0, 10) for y in range(0, 5)}
+    allowed = {(x, 2) for x in range(1, 8)} | {(7, 1), (8, 1), (7, 3), (8, 3)}
     occupied = {
         (x, y)
         for x in range(70)
@@ -83,9 +83,9 @@ def test_routing_supports_splitter_state(project_root):
         if (x, y) not in allowed
     }
     port_specs = [
-        {"instance_id": "src", "x": 1, "y": 2, "dir": "E", "type": "out", "commodity": "test"},
-        {"instance_id": "sink_a", "x": 8, "y": 1, "dir": "W", "type": "in", "commodity": "test"},
-        {"instance_id": "sink_b", "x": 8, "y": 3, "dir": "W", "type": "in", "commodity": "test"},
+        {"instance_id": "src", "x": 0, "y": 2, "dir": "E", "type": "out", "commodity": "test"},
+        {"instance_id": "sink_a", "x": 8, "y": 2, "dir": "S", "type": "in", "commodity": "test"},
+        {"instance_id": "sink_b", "x": 8, "y": 2, "dir": "N", "type": "in", "commodity": "test"},
     ]
 
     routing = RoutingSubproblem(RoutingGrid(occupied, port_specs), ["test"])
@@ -187,6 +187,265 @@ def test_port_balance_analysis_identifies_dead_end_and_split_merge_needs(project
     assert diag["dead_end"]["capsule"] == {"in": 0, "out": 2}
     assert diag["needs_splitter"]["ore"]["delta"] == 1
     assert diag["needs_merger"]["powder"]["delta"] == 1
+
+
+def test_exact_routing_precheck_flags_front_blocked(project_root):
+    import sys
+
+    sys.path.insert(0, str(project_root))
+    from src.models.routing_subproblem import RoutingGrid, run_exact_routing_precheck
+
+    occupied = {(1, 0)}
+    port_specs = [
+        {"instance_id": "src", "x": 0, "y": 0, "dir": "E", "type": "out", "commodity": "ore"},
+    ]
+
+    precheck = run_exact_routing_precheck(
+        RoutingGrid(occupied, port_specs),
+        occupied_owner_by_cell={(1, 0): "blocker"},
+    )
+
+    assert precheck["status"] == "front_blocked"
+    assert precheck["binding_selection_safe_reject"] is True
+    assert precheck["placement_level_conflict_set"] == ["src", "blocker"]
+    assert precheck["blocked_ports"][0]["front_cell"] == [1, 0]
+
+
+def test_exact_routing_precheck_flags_relaxed_disconnected(project_root):
+    import sys
+
+    sys.path.insert(0, str(project_root))
+    from src.models.routing_subproblem import RoutingGrid, run_exact_routing_precheck
+
+    allowed = {(1, 1), (5, 5)}
+    occupied = {
+        (x, y)
+        for x in range(70)
+        for y in range(70)
+        if (x, y) not in allowed
+    }
+    port_specs = [
+        {"instance_id": "src", "x": 0, "y": 1, "dir": "E", "type": "out", "commodity": "ore"},
+        {"instance_id": "sink", "x": 6, "y": 5, "dir": "W", "type": "in", "commodity": "ore"},
+    ]
+
+    precheck = run_exact_routing_precheck(RoutingGrid(occupied, port_specs))
+
+    assert precheck["status"] == "relaxed_disconnected"
+    assert precheck["binding_selection_safe_reject"] is True
+    assert precheck["placement_level_conflict_set"] == []
+    assert precheck["disconnected_commodities"][0]["commodity"] == "ore"
+
+
+def test_terminal_aware_peeling_prunes_non_terminal_dead_end_branch(project_root):
+    import sys
+
+    sys.path.insert(0, str(project_root))
+    from src.models.routing_subproblem import RoutingGrid, analyze_exact_routing_domain
+
+    allowed = {(x, 2) for x in range(1, 9)} | {(4, 3), (4, 4)}
+    occupied = {
+        (x, y)
+        for x in range(70)
+        for y in range(70)
+        if (x, y) not in allowed
+    }
+    port_specs = [
+        {"instance_id": "src", "x": 0, "y": 2, "dir": "E", "type": "out", "commodity": "ore"},
+        {"instance_id": "sink", "x": 8, "y": 3, "dir": "S", "type": "in", "commodity": "ore"},
+    ]
+
+    analysis = analyze_exact_routing_domain(RoutingGrid(occupied, port_specs))
+
+    assert analysis["status"] == "feasible"
+    assert analysis["domain_stats"]["commodity_component_cells"]["ore"] == 10
+    assert analysis["domain_stats"]["commodity_active_cells"]["ore"] == 8
+    assert [4, 3] not in analysis["commodity_active_cells"]["ore"]
+    assert [4, 4] not in analysis["commodity_active_cells"]["ore"]
+    assert [1, 2] in analysis["commodity_active_cells"]["ore"]
+    assert [8, 2] in analysis["commodity_active_cells"]["ore"]
+
+
+def test_routing_local_pattern_filter_reduces_state_space_without_changing_feasibility(project_root):
+    import sys
+
+    sys.path.insert(0, str(project_root))
+    from src.models.routing_subproblem import RoutingGrid, RoutingSubproblem
+
+    allowed = {(x, 2) for x in range(1, 9)} | {(4, 3), (4, 4)}
+    occupied = {
+        (x, y)
+        for x in range(70)
+        for y in range(70)
+        if (x, y) not in allowed
+    }
+    port_specs = [
+        {"instance_id": "src", "x": 0, "y": 2, "dir": "E", "type": "out", "commodity": "ore"},
+        {"instance_id": "sink", "x": 8, "y": 3, "dir": "S", "type": "in", "commodity": "ore"},
+    ]
+
+    routing = RoutingSubproblem(RoutingGrid(occupied, port_specs), ["ore"])
+    routing.build()
+    state_space = routing.build_stats["state_space"]
+
+    assert state_space["vars"] < state_space["naive_full_domain_vars"]
+    assert state_space["domain_cells"] > state_space["terminal_core_cells"]
+    assert state_space["local_pattern_pruned_states"] > 0
+    assert routing.solve(time_limit=10.0) == "FEASIBLE"
+
+
+def test_elevated_bridge_states_require_opposite_neighbors(project_root):
+    import sys
+
+    sys.path.insert(0, str(project_root))
+    from src.models.routing_subproblem import RoutingGrid, RoutingSubproblem
+
+    allowed = {(2, 2), (3, 2)}
+    occupied = {
+        (x, y)
+        for x in range(70)
+        for y in range(70)
+        if (x, y) not in allowed
+    }
+    port_specs = [
+        {"instance_id": "src", "x": 1, "y": 2, "dir": "E", "type": "out", "commodity": "ore"},
+        {"instance_id": "sink", "x": 3, "y": 3, "dir": "S", "type": "in", "commodity": "ore"},
+    ]
+
+    routing = RoutingSubproblem(RoutingGrid(occupied, port_specs), ["ore"])
+    routing.build()
+
+    elevated_states = [
+        key for key in routing.r_vars
+        if key[2] == 1
+    ]
+    assert elevated_states == []
+
+
+def test_routing_placement_core_precheck_matches_grid_path(project_root):
+    import sys
+
+    sys.path.insert(0, str(project_root))
+    from src.models.routing_subproblem import (
+        RoutingGrid,
+        RoutingPlacementCore,
+        analyze_exact_routing_domain,
+        run_exact_routing_precheck,
+    )
+
+    feasible_allowed = {(x, 2) for x in range(1, 9)} | {(4, 3), (4, 4)}
+    disconnected_allowed = {(1, 1), (5, 5)}
+    cases = [
+        (
+            "front_blocked",
+            {(1, 0)},
+            [{"instance_id": "src", "x": 0, "y": 0, "dir": "E", "type": "out", "commodity": "ore"}],
+            {(1, 0): "blocker"},
+        ),
+        (
+            "relaxed_disconnected",
+            {
+                (x, y)
+                for x in range(70)
+                for y in range(70)
+                if (x, y) not in disconnected_allowed
+            },
+            [
+                {"instance_id": "src", "x": 0, "y": 1, "dir": "E", "type": "out", "commodity": "ore"},
+                {"instance_id": "sink", "x": 6, "y": 5, "dir": "W", "type": "in", "commodity": "ore"},
+            ],
+            {},
+        ),
+        (
+            "feasible",
+            {
+                (x, y)
+                for x in range(70)
+                for y in range(70)
+                if (x, y) not in feasible_allowed
+            },
+            [
+                {"instance_id": "src", "x": 0, "y": 2, "dir": "E", "type": "out", "commodity": "ore"},
+                {"instance_id": "sink", "x": 8, "y": 3, "dir": "S", "type": "in", "commodity": "ore"},
+            ],
+            {},
+        ),
+    ]
+
+    for expected_status, occupied, port_specs, owner_map in cases:
+        grid = RoutingGrid(occupied, list(port_specs), occupied_owner_by_cell=owner_map)
+        placement_core = RoutingPlacementCore.from_occupied_cells(
+            occupied,
+            occupied_owner_by_cell=owner_map,
+        )
+
+        grid_analysis = analyze_exact_routing_domain(
+            grid,
+            occupied_owner_by_cell=owner_map,
+        )
+        core_analysis = analyze_exact_routing_domain(
+            placement_core=placement_core,
+            port_specs=port_specs,
+            occupied_owner_by_cell=owner_map,
+        )
+        grid_precheck = run_exact_routing_precheck(
+            grid,
+            occupied_owner_by_cell=owner_map,
+        )
+        core_precheck = run_exact_routing_precheck(
+            placement_core=placement_core,
+            port_specs=port_specs,
+            occupied_owner_by_cell=owner_map,
+        )
+
+        assert grid_analysis["status"] == expected_status
+        assert core_analysis["status"] == expected_status
+        assert grid_analysis["domain_stats"] == core_analysis["domain_stats"]
+        assert grid_precheck["status"] == core_precheck["status"]
+        assert grid_precheck["placement_level_conflict_set"] == core_precheck["placement_level_conflict_set"]
+
+
+def test_routing_subproblem_from_placement_core_matches_grid_build(project_root):
+    import sys
+
+    sys.path.insert(0, str(project_root))
+    from src.models.routing_subproblem import RoutingGrid, RoutingPlacementCore, RoutingSubproblem
+
+    allowed = {(x, 2) for x in range(1, 9)} | {(4, 3), (4, 4)}
+    occupied = {
+        (x, y)
+        for x in range(70)
+        for y in range(70)
+        if (x, y) not in allowed
+    }
+    port_specs_a = [
+        {"instance_id": "src_a", "x": 0, "y": 2, "dir": "E", "type": "out", "commodity": "ore"},
+        {"instance_id": "sink_a", "x": 8, "y": 3, "dir": "S", "type": "in", "commodity": "ore"},
+    ]
+    port_specs_b = [
+        {"instance_id": "src_b", "x": 1, "y": 2, "dir": "E", "type": "out", "commodity": "ore"},
+        {"instance_id": "sink_b", "x": 7, "y": 2, "dir": "W", "type": "in", "commodity": "ore"},
+    ]
+    placement_core = RoutingPlacementCore.from_occupied_cells(occupied)
+
+    for port_specs in (port_specs_a, port_specs_b):
+        routing_from_grid = RoutingSubproblem(RoutingGrid(occupied, list(port_specs)), ["ore"])
+        routing_from_grid.build()
+
+        routing_from_core = RoutingSubproblem.from_placement_core(
+            placement_core,
+            port_specs,
+            ["ore"],
+        )
+        routing_from_core.build()
+
+        assert routing_from_core.grid.placement_core is placement_core
+        core_state_space = dict(routing_from_core.build_stats["state_space"])
+        grid_state_space = dict(routing_from_grid.build_stats["state_space"])
+        assert core_state_space.pop("used_placement_core_reuse") is True
+        assert grid_state_space.pop("used_placement_core_reuse") is False
+        assert core_state_space == grid_state_space
+        assert routing_from_core.solve(time_limit=10.0) == routing_from_grid.solve(time_limit=10.0)
 
 
 # ============================================================================

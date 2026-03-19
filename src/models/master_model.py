@@ -1,1823 +1,3699 @@
 """
-主摆放运筹学模型 (Master Placement Model)
-对应规格书：07_master_placement_model
-Status: ACCEPTED_DRAFT
+Master Placement Model（主摆放模型）.
 
-目标：使用 OR-Tools CP-SAT 为 326 个候选刚体在 70×70 网格中寻找一个
-  绝对不重叠、且 100% 满足供电覆盖的合法坐标组合。
-
-接口依赖 (全部 FROZEN)：
-  - data/preprocessed/all_facility_instances.json
-  - data/preprocessed/candidate_placements.json
-  - rules/canonical_rules.json
-  - src/placement/occupancy_masks.py
-  - src/placement/symmetry_breaking.py
+设计目标：
+1. certified_exact（严格认证精确）与 exploratory（探索）两条路径严格分离。
+2. 严格精确路径只读取 mandatory exact（必选精确）实例，
+   可选设施通过 pose-level optional variables（位姿级可选变量）直接建模；
+   不再把 50 / 10 之类经验上限写成正式约束。
+3. exploratory（探索）路径可以继续对位姿级可选设施施加经验上限。
+4. extract_solution()（提取解）为位姿级可选设施生成可持久化识别的完整实例条目。
+5. 集成 Benders 切平面反馈（Cuts），支持外部的 conflict set 并打回重摆。
 """
 
+from __future__ import annotations
+
+import copy
 import json
 import time
-from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple, Set
 from collections import defaultdict
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, DefaultDict, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from ortools.sat.python import cp_model
 
+from src.models.exact_coordinate_master import CoordinateExactMasterDelegate
+from src.preprocess.operation_profiles import get_operation_port_profile
+
+ModeToken = Tuple[str, str]
 POSE_LEVEL_OPTIONAL_TEMPLATES = {"power_pole", "protocol_storage_box"}
-POSE_LEVEL_OPTIONAL_PREFIX = {
-    "power_pole": "power_pole",
-    "protocol_storage_box": "protocol_box",
+POSE_LEVEL_OPTIONAL_OPERATIONS = {
+    "power_pole": "power_supply",
+    "protocol_storage_box": "wireless_sink",
 }
 DIR_DELTA = {"N": (0, 1), "S": (0, -1), "E": (1, 0), "W": (-1, 0)}
+LocalPoseShape = Tuple[Tuple[int, int], ...]
+PoseLocalSignature = Tuple[LocalPoseShape, LocalPoseShape, LocalPoseShape, int]
+LocalCapacitySignature = Tuple[LocalPoseShape, ...]
+CompactLocalCapacityItem = Tuple[int, int, int]
+CompactLocalCapacitySignature = Tuple[CompactLocalCapacityItem, ...]
+ShellPair = Tuple[int, int]
+PackedRectTransition = Tuple[int, int, int]
+_LOCAL_POWER_CAPACITY_CACHE: Dict[Tuple[str, LocalCapacitySignature], int] = {}
+_LOCAL_POWER_CAPACITY_COMPACT_CACHE: Dict[
+    Tuple[str, CompactLocalCapacitySignature],
+    int,
+] = {}
+_LOCAL_POWER_CAPACITY_RECT_DP_CACHE: Dict[
+    Tuple[str, CompactLocalCapacitySignature],
+    int,
+] = {}
+_LOCAL_POWER_CAPACITY_RECT_DP_COMPILED_CACHE: Dict[
+    Tuple[str, CompactLocalCapacitySignature, str],
+    "_CompiledRectangleFrontierDP",
+] = {}
+_LOCAL_POWER_CAPACITY_M6X4_MIXED_CPSAT_DATA_CACHE: Dict[
+    Tuple[str, CompactLocalCapacitySignature],
+    "_CompiledManufacturing6x4MixedCpSatData",
+] = {}
 
-# ==========================================
-# 0. 数据加载
-# ==========================================
 
-def load_project_data(project_root: Path) -> Tuple[
-    List[Dict], Dict[str, List[Dict]], Dict[str, Any]
-]:
-    """加载全部预处理数据。"""
+class _BitsetLocalCapacityFallback(RuntimeError):
+    """Internal exact-safe signal to fall back to the legacy CP-SAT oracle."""
+
+
+class _RectangleFrontierDPFallback(RuntimeError):
+    """Internal exact-safe signal to fall back to the bitset local-capacity oracle."""
+
+
+class _Manufacturing6x4MixedCpSatFallback(RuntimeError):
+    """Internal exact-safe signal to fall back to rect-DP v3 explicitly."""
+
+
+@dataclass(frozen=True)
+class _LocalRectangleVariant:
+    min_x: int
+    min_y: int
+    max_x: int
+    max_y: int
+    width: int
+    height: int
+
+
+@dataclass(frozen=True)
+class _CompiledRectangleFrontierDP:
+    scan_axis: str
+    line_count: int
+    line_width: int
+    frontier_bits: int
+    horizon: int
+    line_end_shift: int
+    current_bit_masks: Tuple[int, ...]
+    placements_by_line_and_pos: Tuple[
+        Tuple[Tuple[Tuple[int, int, Tuple[int, ...]], ...], ...],
+        ...,
+    ]
+    start_options_by_line_and_pos: Tuple[
+        Tuple[Tuple[PackedRectTransition, ...], ...],
+        ...,
+    ]
+    line_subset_transitions_by_line: Tuple[Tuple[PackedRectTransition, ...], ...]
+    compiled_start_options: int
+    deduped_start_options: int
+    compiled_line_subsets: int
+    peak_line_subset_options: int
+
+
+@dataclass(frozen=True)
+class _CompiledManufacturing6x4MixedCpSatData:
+    window_w: int
+    window_h: int
+    placements: Tuple[Tuple[int, int, int, int], ...]
+    cell_to_placement_indices: Dict[Tuple[int, int], Tuple[int, ...]]
+
+
+def _load_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _normalize_generic_io_requirements_payload(
+    payload: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Dict[str, int]]:
+    payload = dict(payload or {})
+    return {
+        "required_generic_outputs": {
+            str(k): int(v)
+            for k, v in dict(payload.get("required_generic_outputs", {})).items()
+        },
+        "required_generic_inputs": {
+            str(k): int(v)
+            for k, v in dict(payload.get("required_generic_inputs", {})).items()
+        },
+    }
+
+
+def load_generic_io_requirements_artifact(project_root: Path) -> Dict[str, Dict[str, int]]:
+    data_dir = project_root / "data" / "preprocessed"
+    return _normalize_generic_io_requirements_payload(
+        _load_json(data_dir / "generic_io_requirements.json")
+    )
+
+
+def infer_certified_optional_lower_bounds(
+    rules: Mapping[str, Any],
+    generic_io_requirements: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, int]:
+    normalized_requirements = _normalize_generic_io_requirements_payload(
+        generic_io_requirements
+    )
+    templates = dict(rules.get("facility_templates", {}))
+    required_counts: Dict[str, int] = {}
+
+    if "protocol_storage_box" in templates:
+        slots_per_box = int(
+            get_operation_port_profile(
+                POSE_LEVEL_OPTIONAL_OPERATIONS["protocol_storage_box"]
+            ).generic_input_slots
+        )
+        required_slots = sum(
+            int(v)
+            for v in normalized_requirements.get("required_generic_inputs", {}).values()
+        )
+        if slots_per_box > 0:
+            required_box_count = (required_slots + slots_per_box - 1) // slots_per_box
+            if required_box_count > 0:
+                required_counts["protocol_storage_box"] = int(required_box_count)
+
+    return required_counts
+
+
+def infer_exact_required_pose_optional_counts(
+    rules: Mapping[str, Any],
+    generic_io_requirements: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, int]:
+    """Backward-compatible alias for certified-exact lower-bound inference."""
+
+    return infer_certified_optional_lower_bounds(
+        rules,
+        generic_io_requirements,
+    )
+
+
+def _clone_model_proto(proto: Any) -> Any:
+    cloned = proto.__class__()
+    if hasattr(cloned, "CopyFrom"):
+        cloned.CopyFrom(proto)
+    else:
+        cloned.copy_from(proto)
+    return cloned
+
+
+def _normalize_solve_mode(
+    solve_mode: Optional[str] = None,
+    exact_mode: Optional[bool] = None,
+) -> str:
+    if exact_mode is not None:
+        return "certified_exact" if exact_mode else "exploratory"
+    if solve_mode is None:
+        return "certified_exact"
+    if solve_mode not in {"certified_exact", "exploratory"}:
+        raise ValueError(f"Unsupported solve_mode（不支持的求解模式）: {solve_mode}")
+    return solve_mode
+
+
+def _load_mandatory_exact_instances(data_dir: Path) -> List[Dict[str, Any]]:
+    exact_path = data_dir / "mandatory_exact_instances.json"
+    if exact_path.exists():
+        payload = _load_json(exact_path)
+        if isinstance(payload, dict) and "instances" in payload:
+            return list(payload["instances"])
+        return list(payload)
+
+    all_path = data_dir / "all_facility_instances.json"
+    payload = _load_json(all_path)
+    return [
+        dict(inst)
+        for inst in payload
+        if bool(inst.get("is_mandatory")) and inst.get("bound_type") == "exact"
+    ]
+
+
+def _load_all_facility_instances(data_dir: Path) -> List[Dict[str, Any]]:
+    all_path = data_dir / "all_facility_instances.json"
+    if all_path.exists():
+        payload = _load_json(all_path)
+        if isinstance(payload, dict) and "instances" in payload:
+            return list(payload["instances"])
+        return list(payload)
+
+    mandatory = _load_mandatory_exact_instances(data_dir)
+    caps_path = data_dir / "exploratory_optional_caps.json"
+    if not caps_path.exists():
+        return mandatory
+    caps = _load_json(caps_path)
+    optional_instances: List[Dict[str, Any]] = []
+    for facility_type, spec in dict(caps).items():
+        cap = int(spec.get("cap", 0))
+        prefix = "power_pole" if facility_type == "power_pole" else "protocol_box"
+        for index in range(1, cap + 1):
+            optional_instances.append(
+                {
+                    "instance_id": f"{prefix}_{index:03d}",
+                    "facility_type": facility_type,
+                    "operation_type": spec.get("operation_type", POSE_LEVEL_OPTIONAL_OPERATIONS.get(facility_type, facility_type)),
+                    "is_mandatory": False,
+                    "bound_type": spec.get("bound_type", "provisional"),
+                }
+            )
+    return mandatory + optional_instances
+
+
+def load_project_data(
+    project_root: Path,
+    solve_mode: str = "certified_exact",
+) -> Tuple[List[Dict[str, Any]], Dict[str, List[Dict[str, Any]]], Dict[str, Any]]:
+    """Load canonical project data（加载项目工件）.
+
+    certified_exact（严格认证精确）默认只读取 mandatory_exact_instances.json。
+    exploratory（探索）读取 all_facility_instances.json。
+    """
+
+    solve_mode = _normalize_solve_mode(solve_mode)
     data_dir = project_root / "data" / "preprocessed"
 
-    with open(data_dir / "all_facility_instances.json", "r", encoding="utf-8") as f:
-        instances = json.load(f)
+    if solve_mode == "certified_exact":
+        instances = _load_mandatory_exact_instances(data_dir)
+    else:
+        instances = _load_all_facility_instances(data_dir)
 
-    with open(data_dir / "candidate_placements.json", "r", encoding="utf-8") as f:
-        placements_data = json.load(f)
-    pools = placements_data["facility_pools"]
-
-    with open(project_root / "rules" / "canonical_rules.json", "r", encoding="utf-8") as f:
-        rules = json.load(f)
-
-    return instances, pools, rules
+    placements_payload = _load_json(data_dir / "candidate_placements.json")
+    facility_pools = dict(placements_payload["facility_pools"])
+    rules = dict(_load_json(project_root / "rules" / "canonical_rules.json"))
+    return instances, facility_pools, rules
 
 
-# ==========================================
-# 1. 模型构建器
-# ==========================================
+@dataclass
+class ExactMasterCore:
+    """Candidate-independent exact master core that can be cloned per ghost rectangle."""
+
+    proto: Any
+    source_instances: List[Dict[str, Any]]
+    facility_pools: Dict[str, List[Dict[str, Any]]]
+    rules: Dict[str, Any]
+    generic_io_requirements: Dict[str, Dict[str, int]]
+    build_stats: Dict[str, Any]
+    z_var_indices: Dict[str, Dict[int, int]]
+    optional_pose_var_indices: Dict[str, Dict[int, int]]
+    mandatory_groups: List[Dict[str, Any]]
+    group_id_by_instance: Dict[str, str]
+    skip_power_coverage: bool
+    enable_symmetry_breaking: bool
+    master_representation: str = "pose_bool_v1"
+    coordinate_binding: Dict[str, Any] = field(default_factory=dict)
+
 
 class MasterPlacementModel:
-    """07 章主摆放模型的 CP-SAT 实现。
-
-    核心约束：
-      (1) Assignment: 强制实例单选, 可选实例条件单选
-      (2) Set Packing: 每格最多 1 个刚体
-      (3) Power Coverage: 需电设施必须被至少 1 个供电桩覆盖
-      (4) Symmetry Breaking: 同模板等价实例字典序排列
-      (5) Global Valid Inequality: 供电桩数 ≥ 理论下界
-    """
+    """CP-SAT feasibility model（可行性模型） for placement（摆放）."""
 
     def __init__(
         self,
-        instances: List[Dict],
-        facility_pools: Dict[str, List[Dict]],
-        rules: Dict[str, Any],
+        instances: Sequence[Mapping[str, Any]],
+        facility_pools: Mapping[str, List[Dict[str, Any]]],
+        rules: Mapping[str, Any],
         ghost_rect: Optional[Tuple[int, int]] = None,
         skip_power_coverage: bool = False,
         enable_symmetry_breaking: bool = True,
-        exact_mode: bool = False,
+        generic_io_requirements: Optional[Mapping[str, Any]] = None,
+        exact_mode: Optional[bool] = None,
+        solve_mode: Optional[str] = None,
     ):
-        self.source_instances = instances
-        self.instances = [i for i in instances if i["is_mandatory"]]
-        self.pools = facility_pools
-        self.rules = rules
-        self.templates = rules["facility_templates"]
-        self.ghost_rect = ghost_rect  # (w, h) or None
+        self.solve_mode = _normalize_solve_mode(solve_mode, exact_mode)
+        self.exact_mode = self.solve_mode == "certified_exact"
+
+        self.source_instances: List[Dict[str, Any]] = [dict(item) for item in instances]
+        self.instances: List[Dict[str, Any]] = [
+            item for item in self.source_instances if bool(item.get("is_mandatory"))
+        ]
+        self.facility_pools = {tpl: list(pool) for tpl, pool in facility_pools.items()}
+        self.rules = dict(rules)
+        self.templates = dict(self.rules["facility_templates"])
+        self.generic_io_requirements = _normalize_generic_io_requirements_payload(
+            generic_io_requirements
+        )
+        self._exact_required_pose_optional_counts = {}
+        self._certified_optional_lower_bounds = (
+            infer_certified_optional_lower_bounds(
+                self.rules,
+                self.generic_io_requirements,
+            )
+            if self.exact_mode
+            else {}
+        )
+        self.ghost_rect = ghost_rect
         self.skip_power_coverage = skip_power_coverage
         self.enable_symmetry_breaking = enable_symmetry_breaking
-        self.exact_mode = exact_mode
+
+        grid = self.rules["globals"]["grid"]
+        self.grid_w = int(grid["width"])
+        self.grid_h = int(grid["height"])
 
         self.model = cp_model.CpModel()
-        self._template_ord = {
-            tpl: idx for idx, tpl in enumerate(sorted(self.templates.keys()))
-        }
-        self._instance_ord = {
-            inst["instance_id"]: idx for idx, inst in enumerate(self.source_instances)
-        }
+        self._solver: Optional[cp_model.CpSolver] = None
+        self._status: Optional[int] = None
+        self._built = False
 
-        # 变量存储
-        self.z_vars: Dict[str, Dict[int, Any]] = {}  # z_vars[group_or_inst_id][pose_idx]
-        self.x_vars: Dict[str, Any] = {}  # x_vars[inst_id] (optional activation)
-        self.optional_pose_vars: Dict[str, Dict[int, Any]] = {}
-        self.u_vars: Dict[int, Any] = {}  # u_vars[rect_idx] (ghost rect)
-        self._ghost_cell_vars: Dict[int, List[Any]] = defaultdict(list)
-        self._ghost_domains: List[Dict[str, Any]] = []
-        self._power_pose_info: Dict[str, List[Tuple[bool, List[int]]]] = {}
-        self._power_pose_and: Dict[str, Dict[int, Any]] = {}
-        self.build_stats: Dict[str, Any] = {}
+        self.z_vars: Dict[str, Dict[int, cp_model.IntVar]] = {}
+        self.optional_pose_vars: Dict[str, Dict[int, cp_model.IntVar]] = {}
+        self.u_vars: Dict[int, cp_model.IntVar] = {}
+        self._mandatory_signature_count_vars: Dict[str, Dict[str, cp_model.IntVar]] = {}
+        self._required_optional_signature_count_vars: Dict[str, Dict[str, cp_model.IntVar]] = {}
+        self._power_pole_family_count_vars: Dict[str, cp_model.IntVar] = {}
 
-        # 索引缓存
-        self._mandatory = list(self.instances)
-        self._optional = [
-            i for i in instances
-            if not i["is_mandatory"]
-            and i["facility_type"] not in POSE_LEVEL_OPTIONAL_TEMPLATES
-        ]
-        self._pose_optional_templates = sorted({
-            i["facility_type"]
-            for i in instances
-            if not i["is_mandatory"]
-            and i["facility_type"] in POSE_LEVEL_OPTIONAL_TEMPLATES
-        })
-        self._powered_types = {
-            tpl_key for tpl_key, tpl_def in self.templates.items()
-            if tpl_def.get("needs_power", False)
-        }
         self._mandatory_groups: List[Dict[str, Any]] = []
         self._group_id_by_instance: Dict[str, str] = {}
-        self._groups_by_template: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-        self._group_ord: Dict[str, int] = {}
-        self._exact_search_strategy_added = False
-        self._greedy_hint_cache: Optional[Dict[str, int]] = None
+        self._optional_cap_by_template = self._infer_optional_caps()
+        self._powered_templates = {
+            tpl for tpl, spec in self.templates.items() if bool(spec.get("needs_power", False))
+        }
+
+        self._covering_pose_indices: Dict[str, Dict[Tuple[int, int], List[int]]] = {}
+        self._heuristic_port_fronts: Dict[str, Dict[int, Optional[List[Tuple[int, int]]]]] = {}
+        self._power_coverers_by_template_pose: Dict[str, Dict[int, List[int]]] = {}
+        self._pose_cells_by_template_pose: Dict[str, Dict[int, FrozenSet[Tuple[int, int]]]] = {}
+        self._pose_anchor_by_template_pose: Dict[str, Dict[int, Tuple[int, int]]] = {}
+        self._pose_local_cells_by_template_pose: Dict[str, Dict[int, LocalPoseShape]] = {}
+        self._pose_local_fronts_by_template_pose: Dict[str, Dict[int, Optional[LocalPoseShape]]] = {}
+        self._pose_local_power_coverage_by_template_pose: Dict[str, Dict[int, LocalPoseShape]] = {}
+        self._pose_local_signature_by_template_pose: Dict[str, Dict[int, PoseLocalSignature]] = {}
+        self._pose_local_shape_token_by_template_pose: Dict[str, Dict[int, int]] = {}
+        self._local_shape_token_by_template_shape: Dict[str, Dict[LocalPoseShape, int]] = {}
+        self._local_shape_by_template_token: Dict[str, Dict[int, LocalPoseShape]] = {}
+        self._local_rectangle_variant_by_template_token: Dict[
+            str,
+            Dict[int, Optional[_LocalRectangleVariant]],
+        ] = {}
+        self._power_supported_pose_indices_by_template_pole: Dict[str, Dict[int, List[int]]] = {}
+        self._power_pole_shell_pair_by_pose_idx: Dict[int, ShellPair] = {}
+        self._power_pole_pose_indices_by_shell_pair: Dict[ShellPair, List[int]] = {}
+        self._local_power_capacity_signature_by_template_pole: Dict[str, Dict[int, LocalCapacitySignature]] = {}
+        self._compact_local_power_capacity_signature_by_template_pole: Dict[
+            str,
+            Dict[int, CompactLocalCapacitySignature],
+        ] = {}
+        self._power_pole_pose_indices_by_template_capacity_signature: Dict[
+            str,
+            Dict[LocalCapacitySignature, List[int]],
+        ] = {}
+        self._power_pole_pose_indices_by_template_compact_capacity_signature: Dict[
+            str,
+            Dict[CompactLocalCapacitySignature, List[int]],
+        ] = {}
+        self._legacy_local_power_capacity_signature_by_template_compact_signature: Dict[
+            str,
+            Dict[CompactLocalCapacitySignature, LocalCapacitySignature],
+        ] = {}
+        self._mandatory_signature_buckets: Dict[str, List[Dict[str, Any]]] = {}
+        self._required_optional_signature_buckets: Dict[str, List[Dict[str, Any]]] = {}
+        self._signature_bucket_payload_cache: Dict[Tuple[str, FrozenSet[int]], List[Dict[str, Any]]] = {}
+        self._signature_domain_payload_cache: Dict[Tuple[str, FrozenSet[int]], Dict[str, Any]] = {}
+        self._candidate_pose_indices_by_template: Dict[str, List[int]] = {}
+        self._ghost_domains: List[Dict[str, Any]] = []
+        self._cell_occupancy_terms: DefaultDict[Tuple[int, int], List[cp_model.IntVar]] = defaultdict(list)
+        self._last_solution: Optional[Dict[str, Any]] = None
+        self._local_power_capacity_bitset_max_iterations = 200_000
+        self._local_power_capacity_rect_dp_max_states = 50_000_000
+        self._local_power_capacity_rect_dp_max_line_subsets = 200_000
+        self._local_power_capacity_rect_dp_v4_max_peak_line_subset_options = 160
+        self._local_power_capacity_rect_dp_v4_max_compiled_line_subsets = 2_000
+
+        self.build_stats: Dict[str, Any] = {
+            "solve_mode": self.solve_mode,
+            "optional_caps": dict(self._optional_cap_by_template),
+            "generic_io_requirements": copy.deepcopy(self.generic_io_requirements),
+            "exact_required_optionals": dict(self._exact_required_pose_optional_counts),
+            "exact_optional_lower_bounds": dict(self._certified_optional_lower_bounds),
+        }
+        self._exact_precompute_profile: Dict[str, Any] = {
+            "power_capacity_shell_pairs": 0,
+            "power_capacity_shell_pair_evaluations": 0,
+            "power_capacity_signature_classes": 0,
+            "power_capacity_signature_class_evaluations": 0,
+            "power_capacity_compact_signature_classes": 0,
+            "power_capacity_compact_signature_evaluations": 0,
+            "power_capacity_compact_signature_cache_hits": 0,
+            "power_capacity_compact_signature_cache_misses": 0,
+            "power_capacity_rect_dp_evaluations": 0,
+            "power_capacity_rect_dp_cache_hits": 0,
+            "power_capacity_rect_dp_cache_misses": 0,
+            "power_capacity_rect_dp_state_merges": 0,
+            "power_capacity_rect_dp_peak_line_states": 0,
+            "power_capacity_rect_dp_peak_pos_states": 0,
+            "power_capacity_rect_dp_compiled_signatures": 0,
+            "power_capacity_rect_dp_compiled_start_options": 0,
+            "power_capacity_rect_dp_deduped_start_options": 0,
+            "power_capacity_rect_dp_compiled_line_subsets": 0,
+            "power_capacity_rect_dp_peak_line_subset_options": 0,
+            "power_capacity_rect_dp_v3_fallbacks": 0,
+            "power_capacity_m6x4_mixed_cpsat_evaluations": 0,
+            "power_capacity_m6x4_mixed_cpsat_cache_hits": 0,
+            "power_capacity_m6x4_mixed_cpsat_selected_cases": 0,
+            "power_capacity_m6x4_mixed_cpsat_v3_fallbacks": 0,
+            "power_capacity_bitset_oracle_evaluations": 0,
+            "power_capacity_bitset_fallbacks": 0,
+            "power_capacity_cpsat_fallbacks": 0,
+            "power_capacity_oracle": "rectangle_frontier_dp_v4",
+            "power_capacity_raw_pole_evaluations": 0,
+            "signature_bucket_cache_hits": 0,
+            "signature_bucket_cache_misses": 0,
+            "signature_bucket_distinct_keys": 0,
+            "geometry_cache_templates": 0,
+        }
+        self.build_stats["exact_precompute_profile"] = dict(self._exact_precompute_profile)
+
         self._build_mandatory_groups()
+        self._index_pools()
+        self._build_signature_buckets()
+        self._coordinate_delegate: Optional[CoordinateExactMasterDelegate] = (
+            CoordinateExactMasterDelegate(self) if self.exact_mode else None
+        )
 
-    def _build_mandatory_groups(self):
-        grouped: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+    @classmethod
+    def build_exact_core(
+        cls,
+        instances: Sequence[Mapping[str, Any]],
+        facility_pools: Mapping[str, List[Dict[str, Any]]],
+        rules: Mapping[str, Any],
+        *,
+        skip_power_coverage: bool = False,
+        enable_symmetry_breaking: bool = True,
+        generic_io_requirements: Optional[Mapping[str, Any]] = None,
+    ) -> ExactMasterCore:
+        model = cls(
+            instances,
+            facility_pools,
+            rules,
+            ghost_rect=None,
+            skip_power_coverage=skip_power_coverage,
+            enable_symmetry_breaking=enable_symmetry_breaking,
+            generic_io_requirements=generic_io_requirements,
+            solve_mode="certified_exact",
+        )
+        model.build()
+        return ExactMasterCore(
+            proto=_clone_model_proto(model.model.Proto()),
+            source_instances=copy.deepcopy(model.source_instances),
+            facility_pools=copy.deepcopy(model.facility_pools),
+            rules=copy.deepcopy(model.rules),
+            generic_io_requirements=copy.deepcopy(model.generic_io_requirements),
+            build_stats=copy.deepcopy(model.build_stats),
+            z_var_indices=model._current_z_var_indices(),
+            optional_pose_var_indices=model._current_optional_pose_var_indices(),
+            mandatory_groups=copy.deepcopy(model._mandatory_groups),
+            group_id_by_instance=dict(model._group_id_by_instance),
+            skip_power_coverage=bool(model.skip_power_coverage),
+            enable_symmetry_breaking=bool(model.enable_symmetry_breaking),
+            master_representation=str(model.build_stats.get("master_representation", "pose_bool_v1")),
+            coordinate_binding=(
+                model._coordinate_delegate.export_core_binding()
+                if model._coordinate_delegate is not None and model.exact_mode
+                else {}
+            ),
+        )
+
+    @classmethod
+    def from_exact_core(
+        cls,
+        core: ExactMasterCore,
+        ghost_rect: Optional[Tuple[int, int]],
+    ) -> "MasterPlacementModel":
+        overlay_started = time.perf_counter()
+        model = cls(
+            core.source_instances,
+            core.facility_pools,
+            core.rules,
+            ghost_rect=ghost_rect,
+            skip_power_coverage=core.skip_power_coverage,
+            enable_symmetry_breaking=core.enable_symmetry_breaking,
+            generic_io_requirements=core.generic_io_requirements,
+            solve_mode="certified_exact",
+        )
+        model.model = cp_model.CpModel(model_proto=_clone_model_proto(core.proto))
+        model._solver = None
+        model._status = None
+        model._last_solution = None
+        model._built = False
+        model.build_stats = copy.deepcopy(core.build_stats)
+        model._mandatory_groups = copy.deepcopy(core.mandatory_groups)
+        model._group_id_by_instance = dict(core.group_id_by_instance)
+        model.build_stats.setdefault("global_valid_inequalities", {}).setdefault(
+            "ghost_aware_via_pole_feasibility",
+            {},
+        )["enabled"] = bool(ghost_rect)
+        ghost_started = time.perf_counter()
+        if str(core.master_representation).startswith("coordinate_exact_v"):
+            if model._coordinate_delegate is None:
+                raise RuntimeError("coordinate exact core requires a coordinate delegate")
+            model._coordinate_delegate.model = model.model
+            model._coordinate_delegate.bind_from_core(core.coordinate_binding)
+            model._coordinate_delegate._add_ghost_constraints()
+            model._coordinate_delegate._finalize_build_stats()
+            model._mandatory_signature_count_vars = model._coordinate_delegate.mandatory_signature_count_vars
+            model._required_optional_signature_count_vars = model._coordinate_delegate.required_optional_signature_count_vars
+            model._power_pole_family_count_vars = model._coordinate_delegate.power_pole_family_count_vars
+        else:
+            model._bind_vars_from_exact_core(core)
+            model._populate_cell_occupancy_terms()
+            model._ghost_domains.clear()
+            model.u_vars.clear()
+            model._add_ghost_rect_constraints()
+        model.build_stats["exact_core_reuse"] = {
+            "used": True,
+            "core_proto_variables": len(core.proto.variables),
+            "core_proto_constraints": len(core.proto.constraints),
+            "overlay_build_seconds": time.perf_counter() - overlay_started,
+            "ghost_constraint_seconds": time.perf_counter() - ghost_started,
+        }
+        model._built = True
+        return model
+
+    def _infer_optional_caps(self) -> Dict[str, int]:
+        counts: Dict[str, int] = defaultdict(int)
+        for inst in self.source_instances:
+            if bool(inst.get("is_mandatory")):
+                continue
+            tpl = str(inst.get("facility_type", ""))
+            if tpl in POSE_LEVEL_OPTIONAL_TEMPLATES:
+                counts[tpl] += 1
+        return dict(counts)
+
+    def _build_mandatory_groups(self) -> None:
+        grouped: DefaultDict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
         for inst in self.instances:
-            grouped[(inst["facility_type"], str(inst.get("operation_type", "")))].append(inst)
+            tpl = str(inst["facility_type"])
+            operation_type = str(inst.get("operation_type", ""))
+            grouped[(tpl, operation_type)].append(inst)
 
-        self._mandatory_groups = []
+        self._mandatory_groups.clear()
         self._group_id_by_instance.clear()
-        self._groups_by_template = defaultdict(list)
-
-        for group_ord, key in enumerate(sorted(grouped.keys())):
-            tpl, operation_type = key
-            members = sorted(grouped[key], key=lambda inst: inst["instance_id"])
-            group_id = f"{tpl}::{operation_type}"
-            group_info = {
+        for group_index, ((tpl, operation_type), members) in enumerate(sorted(grouped.items())):
+            members = sorted(members, key=lambda item: str(item["instance_id"]))
+            group_id = f"group::{tpl}::{operation_type}::{group_index}"
+            group = {
                 "group_id": group_id,
                 "facility_type": tpl,
                 "operation_type": operation_type,
-                "instance_ids": [inst["instance_id"] for inst in members],
                 "count": len(members),
+                "instance_ids": [str(item["instance_id"]) for item in members],
             }
-            self._mandatory_groups.append(group_info)
-            self._groups_by_template[tpl].append(group_info)
-            self._group_ord[group_id] = group_ord
-            for iid in group_info["instance_ids"]:
-                self._group_id_by_instance[iid] = group_id
+            self._mandatory_groups.append(group)
+            for instance_id in group["instance_ids"]:
+                self._group_id_by_instance[instance_id] = group_id
 
         self.build_stats["grouped_encoding"] = {
             "mandatory_instances": len(self.instances),
             "mandatory_groups": len(self._mandatory_groups),
         }
 
-    def build(self):
-        """构建完整模型。"""
-        t0 = time.time()
+    def _pose_mode_token(self, pose: Mapping[str, Any]) -> ModeToken:
+        params = dict(pose.get("pose_params", {}))
+        return (str(params.get("orientation", "")), str(params.get("port_mode", "")))
+
+    def _update_exact_precompute_profile(self, **updates: Any) -> None:
+        self._exact_precompute_profile.update(updates)
+        self.build_stats["exact_precompute_profile"] = dict(self._exact_precompute_profile)
+
+    def _intern_local_shape_token(self, tpl: str, local_shape: LocalPoseShape) -> int:
+        tpl = str(tpl)
+        token_by_shape = self._local_shape_token_by_template_shape.setdefault(tpl, {})
+        cached = token_by_shape.get(local_shape)
+        if cached is not None:
+            return int(cached)
+
+        token = int(len(token_by_shape))
+        token_by_shape[local_shape] = token
+        self._local_shape_by_template_token.setdefault(tpl, {})[token] = local_shape
+        return token
+
+    def _rectangle_variant_for_local_shape(
+        self,
+        local_shape: LocalPoseShape,
+    ) -> Optional[_LocalRectangleVariant]:
+        if not local_shape:
+            return None
+        xs = sorted({int(cell_x) for cell_x, _ in local_shape})
+        ys = sorted({int(cell_y) for _, cell_y in local_shape})
+        if not xs or not ys:
+            return None
+        min_x = int(min(xs))
+        max_x = int(max(xs))
+        min_y = int(min(ys))
+        max_y = int(max(ys))
+        expected = {
+            (int(cell_x), int(cell_y))
+            for cell_x in range(min_x, max_x + 1)
+            for cell_y in range(min_y, max_y + 1)
+        }
+        if expected != set(local_shape):
+            return None
+        return _LocalRectangleVariant(
+            min_x=min_x,
+            min_y=min_y,
+            max_x=max_x,
+            max_y=max_y,
+            width=int(max_x - min_x + 1),
+            height=int(max_y - min_y + 1),
+        )
+
+    def _ensure_local_rectangle_variants(
+        self,
+        tpl: str,
+    ) -> Dict[int, Optional[_LocalRectangleVariant]]:
+        tpl = str(tpl)
+        cached = self._local_rectangle_variant_by_template_token.get(tpl)
+        if cached is not None:
+            return cached
+        variants: Dict[int, Optional[_LocalRectangleVariant]] = {}
+        for token, local_shape in sorted(self._local_shape_by_template_token.get(tpl, {}).items()):
+            variants[int(token)] = self._rectangle_variant_for_local_shape(local_shape)
+        self._local_rectangle_variant_by_template_token[tpl] = variants
+        return variants
+
+    def _clone_signature_bucket_payload(
+        self,
+        payload: Sequence[Mapping[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        return [
+            {
+                "bucket_id": str(bucket["bucket_id"]),
+                "signature": bucket["signature"],
+                "pose_indices": list(bucket.get("pose_indices", [])),
+            }
+            for bucket in payload
+        ]
+
+    def _power_pole_shell_pair(self, pose_idx: int) -> Optional[ShellPair]:
+        return self._power_pole_shell_pair_by_pose_idx.get(int(pose_idx))
+
+    def _index_pools(self) -> None:
+        """Build indices（构建索引） for occupancy, power and exploratory port heuristics."""
+
+        self._covering_pose_indices = {}
+        self._heuristic_port_fronts = {}
+        self._power_coverers_by_template_pose = {}
+        self._pose_cells_by_template_pose = {}
+        self._pose_anchor_by_template_pose = {}
+        self._pose_local_cells_by_template_pose = {}
+        self._pose_local_fronts_by_template_pose = {}
+        self._pose_local_power_coverage_by_template_pose = {}
+        self._pose_local_signature_by_template_pose = {}
+        self._power_supported_pose_indices_by_template_pole = {}
+        self._power_pole_shell_pair_by_pose_idx = {}
+        self._power_pole_pose_indices_by_shell_pair = {}
+        self._local_power_capacity_signature_by_template_pole = {}
+        self._power_pole_pose_indices_by_template_capacity_signature = {}
+        self._candidate_pose_indices_by_template = {}
+
+        cell_to_poles: DefaultDict[Tuple[int, int], Set[int]] = defaultdict(set)
+        power_pole_cells: Dict[int, FrozenSet[Tuple[int, int]]] = {}
+        power_pole_anchors: Dict[int, Tuple[int, int]] = {}
+        for pole_idx, pose in enumerate(self.facility_pools.get("power_pole", [])):
+            anchor = dict(pose.get("anchor", {}))
+            anchor_xy = (int(anchor.get("x", 0)), int(anchor.get("y", 0)))
+            pole_cells = frozenset((int(cell[0]), int(cell[1])) for cell in pose.get("occupied_cells", []))
+            local_cells = tuple(
+                sorted((cell_x - anchor_xy[0], cell_y - anchor_xy[1]) for cell_x, cell_y in pole_cells)
+            )
+            local_coverage = tuple(
+                sorted(
+                    (
+                        int(cell[0]) - anchor_xy[0],
+                        int(cell[1]) - anchor_xy[1],
+                    )
+                    for cell in pose.get("power_coverage_cells", []) or []
+                )
+            )
+            power_pole_cells[pole_idx] = pole_cells
+            power_pole_anchors[pole_idx] = anchor_xy
+            self._pose_anchor_by_template_pose.setdefault("power_pole", {})[int(pole_idx)] = anchor_xy
+            self._pose_cells_by_template_pose.setdefault("power_pole", {})[int(pole_idx)] = pole_cells
+            self._pose_local_cells_by_template_pose.setdefault("power_pole", {})[int(pole_idx)] = local_cells
+            self._pose_local_fronts_by_template_pose.setdefault("power_pole", {})[int(pole_idx)] = tuple()
+            self._pose_local_power_coverage_by_template_pose.setdefault("power_pole", {})[int(pole_idx)] = local_coverage
+            self._pose_local_shape_token_by_template_pose.setdefault("power_pole", {})[
+                int(pole_idx)
+            ] = self._intern_local_shape_token("power_pole", local_cells)
+            self._pose_local_signature_by_template_pose.setdefault("power_pole", {})[int(pole_idx)] = (
+                local_cells,
+                tuple(),
+                local_coverage,
+                0,
+            )
+            for cell in pose.get("power_coverage_cells", []) or []:
+                cell_to_poles[(int(cell[0]), int(cell[1]))].add(pole_idx)
+
+        if power_pole_anchors:
+            x_values = [coords[0] for coords in power_pole_anchors.values()]
+            y_values = [coords[1] for coords in power_pole_anchors.values()]
+            x_min, x_max = min(x_values), max(x_values)
+            y_min, y_max = min(y_values), max(y_values)
+            for pole_idx, (anchor_x, anchor_y) in power_pole_anchors.items():
+                dx = min(int(anchor_x - x_min), int(x_max - anchor_x))
+                dy = min(int(anchor_y - y_min), int(y_max - anchor_y))
+                shell_pair = tuple(sorted((int(dx), int(dy))))
+                self._power_pole_shell_pair_by_pose_idx[int(pole_idx)] = shell_pair
+                self._power_pole_pose_indices_by_shell_pair.setdefault(shell_pair, []).append(int(pole_idx))
+            for shell_pair, pose_indices in list(self._power_pole_pose_indices_by_shell_pair.items()):
+                self._power_pole_pose_indices_by_shell_pair[shell_pair] = sorted(
+                    pose_indices,
+                    key=lambda idx: self._pose_sort_key("power_pole", int(idx)),
+                )
+
+        for tpl, pool in self.facility_pools.items():
+            cover_index: DefaultDict[Tuple[int, int], List[int]] = defaultdict(list)
+            front_index: Dict[int, Optional[List[Tuple[int, int]]]] = {}
+            power_index: Dict[int, List[int]] = {}
+            pose_cells_index: Dict[int, FrozenSet[Tuple[int, int]]] = {}
+            supported_by_pole: DefaultDict[int, List[int]] = defaultdict(list)
+
+            for pose_idx, pose in enumerate(pool):
+                anchor = dict(pose.get("anchor", {}))
+                anchor_xy = (int(anchor.get("x", 0)), int(anchor.get("y", 0)))
+                pose_cells = frozenset((int(cell[0]), int(cell[1])) for cell in pose.get("occupied_cells", []))
+                local_cells = tuple(
+                    sorted((cell_x - anchor_xy[0], cell_y - anchor_xy[1]) for cell_x, cell_y in pose_cells)
+                )
+                pose_cells_index[pose_idx] = pose_cells
+                self._pose_anchor_by_template_pose.setdefault(str(tpl), {})[int(pose_idx)] = anchor_xy
+                self._pose_local_cells_by_template_pose.setdefault(str(tpl), {})[int(pose_idx)] = local_cells
+                self._pose_local_shape_token_by_template_pose.setdefault(str(tpl), {})[
+                    int(pose_idx)
+                ] = self._intern_local_shape_token(str(tpl), local_cells)
+                for cell in pose_cells:
+                    cover_index[cell].append(pose_idx)
+
+                unique_fronts: List[Tuple[int, int]] = []
+                seen_fronts: Set[Tuple[int, int]] = set()
+                invalid_front = False
+                for port in list(pose.get("input_port_cells", [])) + list(pose.get("output_port_cells", [])):
+                    px = int(port["x"])
+                    py = int(port["y"])
+                    direction = str(port["dir"])
+                    if direction not in DIR_DELTA:
+                        continue
+                    dx, dy = DIR_DELTA[direction]
+                    fx, fy = px + dx, py + dy
+                    if not (0 <= fx < self.grid_w and 0 <= fy < self.grid_h):
+                        invalid_front = True
+                        break
+                    if (fx, fy) not in seen_fronts:
+                        seen_fronts.add((fx, fy))
+                        unique_fronts.append((fx, fy))
+                front_index[pose_idx] = None if invalid_front else unique_fronts
+                local_fronts = tuple(
+                    sorted(
+                        (cell_x - anchor_xy[0], cell_y - anchor_xy[1])
+                        for cell_x, cell_y in (unique_fronts if not invalid_front else [])
+                    )
+                )
+                local_coverage = tuple(
+                    sorted(
+                        (
+                            int(cell[0]) - anchor_xy[0],
+                            int(cell[1]) - anchor_xy[1],
+                        )
+                        for cell in pose.get("power_coverage_cells", []) or []
+                    )
+                )
+                self._pose_local_fronts_by_template_pose.setdefault(str(tpl), {})[int(pose_idx)] = local_fronts
+                self._pose_local_power_coverage_by_template_pose.setdefault(str(tpl), {})[int(pose_idx)] = local_coverage
+                self._pose_local_signature_by_template_pose.setdefault(str(tpl), {})[int(pose_idx)] = (
+                    local_cells,
+                    local_fronts,
+                    local_coverage,
+                    1 if invalid_front else 0,
+                )
+
+                if tpl in self._powered_templates and tpl != "power_pole":
+                    coverers: Set[int] = set()
+                    for cell in pose_cells:
+                        coverers.update(cell_to_poles.get(cell, set()))
+                    filtered_coverers = sorted(
+                        pole_idx
+                        for pole_idx in coverers
+                        if pose_cells.isdisjoint(power_pole_cells.get(pole_idx, frozenset()))
+                    )
+                    power_index[pose_idx] = filtered_coverers
+                    for pole_idx in filtered_coverers:
+                        supported_by_pole[pole_idx].append(pose_idx)
+
+            self._covering_pose_indices[tpl] = dict(cover_index)
+            self._heuristic_port_fronts[tpl] = front_index
+            self._power_coverers_by_template_pose[tpl] = power_index
+            self._pose_cells_by_template_pose[tpl] = pose_cells_index
+            self._power_supported_pose_indices_by_template_pole[tpl] = {
+                pole_idx: sorted(indices)
+                for pole_idx, indices in supported_by_pole.items()
+            }
+        self._update_exact_precompute_profile(
+            power_capacity_shell_pairs=int(len(self._power_pole_pose_indices_by_shell_pair)),
+            geometry_cache_templates=int(len(self._pose_local_signature_by_template_pose)),
+        )
+
+    def _pose_local_signature(self, tpl: str, pose_idx: int) -> PoseLocalSignature:
+        return self._pose_local_signature_by_template_pose.get(str(tpl), {}).get(
+            int(pose_idx),
+            (tuple(), tuple(), tuple(), 0),
+        )
+
+    def _build_signature_bucket_payload(
+        self,
+        tpl: str,
+        pose_indices: Iterable[int],
+    ) -> List[Dict[str, Any]]:
+        cache_key = (
+            str(tpl),
+            frozenset(int(pose_idx) for pose_idx in pose_indices),
+        )
+        cached = self._signature_bucket_payload_cache.get(cache_key)
+        if cached is not None:
+            self._update_exact_precompute_profile(
+                signature_bucket_cache_hits=int(self._exact_precompute_profile["signature_bucket_cache_hits"]) + 1,
+                signature_bucket_distinct_keys=int(len(self._signature_bucket_payload_cache)),
+            )
+            return self._clone_signature_bucket_payload(cached)
+
+        self._update_exact_precompute_profile(
+            signature_bucket_cache_misses=int(self._exact_precompute_profile["signature_bucket_cache_misses"]) + 1,
+        )
+        buckets_by_signature: DefaultDict[PoseLocalSignature, List[int]] = defaultdict(list)
+        for pose_idx in sorted(cache_key[1]):
+            buckets_by_signature[self._pose_local_signature(tpl, int(pose_idx))].append(int(pose_idx))
+
+        ordered_buckets: List[Dict[str, Any]] = []
+        for bucket_index, signature in enumerate(sorted(buckets_by_signature)):
+            ordered_pose_indices = sorted(
+                buckets_by_signature[signature],
+                key=lambda idx: self._pose_sort_key(tpl, int(idx)),
+            )
+            ordered_buckets.append(
+                {
+                    "bucket_id": f"sig_{bucket_index:03d}",
+                    "signature": signature,
+                    "pose_indices": ordered_pose_indices,
+                }
+            )
+        self._signature_bucket_payload_cache[cache_key] = self._clone_signature_bucket_payload(
+            ordered_buckets
+        )
+        self._update_exact_precompute_profile(
+            signature_bucket_distinct_keys=int(len(self._signature_bucket_payload_cache)),
+        )
+        return self._clone_signature_bucket_payload(ordered_buckets)
+
+    def _bucket_stats_payload(self, buckets: Mapping[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {}
+        for bucket_owner, bucket_defs in sorted(buckets.items()):
+            payload[str(bucket_owner)] = {
+                "bucket_count": len(bucket_defs),
+                "pose_count": sum(len(bucket["pose_indices"]) for bucket in bucket_defs),
+                "bucket_sizes": [len(bucket["pose_indices"]) for bucket in bucket_defs],
+            }
+        return payload
+
+    def _build_signature_buckets(self) -> None:
+        self._mandatory_signature_buckets = {}
+        for group in self._mandatory_groups:
+            group_id = str(group["group_id"])
+            tpl = str(group["facility_type"])
+            self._mandatory_signature_buckets[group_id] = self._build_signature_bucket_payload(
+                tpl,
+                range(len(self.facility_pools.get(tpl, []))),
+            )
+
+        self._required_optional_signature_buckets = {}
+        for tpl, required_count in sorted(self._exact_required_pose_optional_counts.items()):
+            if int(required_count) <= 0:
+                continue
+            self._required_optional_signature_buckets[str(tpl)] = self._build_signature_bucket_payload(
+                str(tpl),
+                range(len(self.facility_pools.get(str(tpl), []))),
+            )
+
+        self.build_stats["signature_buckets"] = {
+            "mandatory_groups": self._bucket_stats_payload(self._mandatory_signature_buckets),
+            "required_optionals": self._bucket_stats_payload(self._required_optional_signature_buckets),
+        }
+
+    def _current_z_var_indices(self) -> Dict[str, Dict[int, int]]:
+        return {
+            group_id: {
+                int(pose_idx): int(var.Index())
+                for pose_idx, var in vars_by_pose.items()
+            }
+            for group_id, vars_by_pose in self.z_vars.items()
+        }
+
+    def _current_optional_pose_var_indices(self) -> Dict[str, Dict[int, int]]:
+        return {
+            tpl: {
+                int(pose_idx): int(var.Index())
+                for pose_idx, var in vars_by_pose.items()
+            }
+            for tpl, vars_by_pose in self.optional_pose_vars.items()
+        }
+
+    def _bind_vars_from_exact_core(self, core: ExactMasterCore) -> None:
+        self.z_vars = {}
+        for group_id, indices_by_pose in core.z_var_indices.items():
+            self.z_vars[group_id] = {
+                int(pose_idx): self.model.GetBoolVarFromProtoIndex(int(proto_idx))
+                for pose_idx, proto_idx in indices_by_pose.items()
+            }
+
+        self.optional_pose_vars = {}
+        for tpl, indices_by_pose in core.optional_pose_var_indices.items():
+            self.optional_pose_vars[tpl] = {
+                int(pose_idx): self.model.GetBoolVarFromProtoIndex(int(proto_idx))
+                for pose_idx, proto_idx in indices_by_pose.items()
+            }
+
+    def _populate_cell_occupancy_terms(self) -> None:
+        self._cell_occupancy_terms = defaultdict(list)
+
+        for group in self._mandatory_groups:
+            group_id = group["group_id"]
+            tpl = group["facility_type"]
+            cover_index = self._covering_pose_indices.get(tpl, {})
+            for cell, pose_indices in cover_index.items():
+                self._cell_occupancy_terms[cell].extend(
+                    self.z_vars[group_id][pose_idx] for pose_idx in pose_indices
+                )
+
+        for tpl, vars_by_pose in self.optional_pose_vars.items():
+            cover_index = self._covering_pose_indices.get(tpl, {})
+            for cell, pose_indices in cover_index.items():
+                self._cell_occupancy_terms[cell].extend(
+                    vars_by_pose[pose_idx] for pose_idx in pose_indices
+                )
+
+    def build(self) -> None:
+        if self._built:
+            return
+        if self.exact_mode and self._coordinate_delegate is not None:
+            self._coordinate_delegate.model = self.model
+            self._coordinate_delegate.build()
+            self._mandatory_signature_count_vars = self._coordinate_delegate.mandatory_signature_count_vars
+            self._required_optional_signature_count_vars = self._coordinate_delegate.required_optional_signature_count_vars
+            self._power_pole_family_count_vars = self._coordinate_delegate.power_pole_family_count_vars
+            self._built = True
+            return
         self._create_variables()
         self._add_assignment_constraints()
-        if self.ghost_rect:
-            self._add_ghost_rect_constraints()
+        self._add_signature_count_constraints()
         self._add_set_packing_constraints()
+        self._add_ghost_rect_constraints()
         self._add_port_clearance_constraints()
         if not self.skip_power_coverage:
             self._add_power_coverage_constraints()
-        else:
-            print("⏭️ [跳过] 供电覆盖约束 (skip_power_coverage=True)")
         if self.enable_symmetry_breaking:
             self._add_symmetry_breaking_constraints()
-        else:
-            self.build_stats["symmetry_breaking"] = {"skipped": True}
-            print("⏭️ [跳过] 对称性破除约束 (enable_symmetry_breaking=False)")
         self._add_global_valid_inequalities()
-        elapsed = time.time() - t0
-        print(f"📐 [模型构建] 耗时 {elapsed:.2f}s, "
-              f"变量: {self.model.Proto().variables.__len__()}, "  # type: ignore
-              f"约束: {self.model.Proto().constraints.__len__()}")  # type: ignore
+        self._add_search_guidance()
+        self._built = True
 
-    # ------------------------------------------
-    # 1.1 变量创建
-    # ------------------------------------------
-    def _create_variables(self):
+    def _create_variables(self) -> None:
         for group in self._mandatory_groups:
             group_id = group["group_id"]
             tpl = group["facility_type"]
-            pool = self.pools[tpl]
-            num_poses = len(pool)
-            group_ord = self._group_ord[group_id]
+            pool = self.facility_pools[tpl]
+            self.z_vars[group_id] = {
+                pose_idx: self.model.NewBoolVar(f"z__{group_id}__{pose_idx}")
+                for pose_idx in range(len(pool))
+            }
 
-            # z_{g,p}: mandatory operation group g 是否占用位姿 p
-            self.z_vars[group_id] = {}
-            for p_idx in range(num_poses):
-                self.z_vars[group_id][p_idx] = self.model.NewBoolVar(
-                    f"zg_{group_ord}_{p_idx}"
+        for tpl in sorted(POSE_LEVEL_OPTIONAL_TEMPLATES):
+            pool = self.facility_pools.get(tpl, [])
+            self.optional_pose_vars[tpl] = {
+                pose_idx: self.model.NewBoolVar(f"opt__{tpl}__{pose_idx}")
+                for pose_idx in range(len(pool))
+            }
+
+        self._mandatory_signature_count_vars = {}
+        for group in self._mandatory_groups:
+            group_id = str(group["group_id"])
+            required_count = int(group["count"])
+            self._mandatory_signature_count_vars[group_id] = {}
+            for bucket in self._mandatory_signature_buckets.get(group_id, []):
+                bucket_id = str(bucket["bucket_id"])
+                upper_bound = min(required_count, len(bucket["pose_indices"]))
+                self._mandatory_signature_count_vars[group_id][bucket_id] = self.model.NewIntVar(
+                    0,
+                    int(upper_bound),
+                    f"sig_count__{group_id}__{bucket_id}",
                 )
 
-        for inst in self._optional:
-            iid = inst["instance_id"]
-            tpl = inst["facility_type"]
-            pool = self.pools[tpl]
-            num_poses = len(pool)
-            inst_ord = self._instance_ord[iid]
-
-            self.z_vars[iid] = {}
-            for p_idx in range(num_poses):
-                self.z_vars[iid][p_idx] = self.model.NewBoolVar(
-                    f"zo_{inst_ord}_{p_idx}"
-                )
-            self.x_vars[iid] = self.model.NewBoolVar(f"x_{inst_ord}")
-
-        for tpl in self._pose_optional_templates:
-            pool = self.pools.get(tpl, [])
-            tpl_ord = self._template_ord.get(tpl, 0)
-            self.optional_pose_vars[tpl] = {}
-            for p_idx in range(len(pool)):
-                self.optional_pose_vars[tpl][p_idx] = self.model.NewBoolVar(
-                    f"o_{tpl_ord}_{p_idx}"
+        self._required_optional_signature_count_vars = {}
+        for tpl, bucket_defs in sorted(self._required_optional_signature_buckets.items()):
+            required_count = int(self._exact_required_pose_optional_counts.get(str(tpl), 0))
+            self._required_optional_signature_count_vars[str(tpl)] = {}
+            for bucket in bucket_defs:
+                bucket_id = str(bucket["bucket_id"])
+                upper_bound = min(required_count, len(bucket["pose_indices"]))
+                self._required_optional_signature_count_vars[str(tpl)][bucket_id] = self.model.NewIntVar(
+                    0,
+                    int(upper_bound),
+                    f"req_opt_sig_count__{tpl}__{bucket_id}",
                 )
 
-    # ------------------------------------------
-    # 1.2 Assignment 约束 (§7.4.1)
-    # ------------------------------------------
-    def _add_assignment_constraints(self):
-        # Mandatory operation groups: each group chooses exactly count many poses.
+    def _add_assignment_constraints(self) -> None:
         for group in self._mandatory_groups:
             group_id = group["group_id"]
-            self.model.Add(sum(self.z_vars[group_id].values()) == group["count"])
+            self.model.Add(sum(self.z_vars[group_id].values()) == int(group["count"]))
 
-        # 可选实例：激活时选 1 个，未激活时 0 个
-        for inst in self._optional:
-            iid = inst["instance_id"]
-            x_i = self.x_vars[iid]
-            z_list = list(self.z_vars[iid].values())
-            self.model.Add(sum(z_list) == x_i)
+        for tpl, vars_by_pose in self.optional_pose_vars.items():
+            if self.solve_mode == "exploratory":
+                cap = int(self._optional_cap_by_template.get(tpl, 0))
+                self.model.Add(sum(vars_by_pose.values()) <= cap)
+            else:
+                # certified_exact（严格认证精确）不加经验上限。
+                pass
 
-        for tpl in self._pose_optional_templates:
-            instance_cap = sum(
-                1 for inst in self.source_instances
-                if not inst["is_mandatory"] and inst["facility_type"] == tpl
-            )
-            if instance_cap > 0:
-                self.model.Add(sum(self.optional_pose_vars[tpl].values()) <= instance_cap)
+    def _add_signature_count_constraints(self) -> None:
+        for group in self._mandatory_groups:
+            group_id = str(group["group_id"])
+            bucket_vars = self._mandatory_signature_count_vars.get(group_id, {})
+            for bucket in self._mandatory_signature_buckets.get(group_id, []):
+                bucket_id = str(bucket["bucket_id"])
+                pose_terms = [
+                    self.z_vars[group_id][int(pose_idx)]
+                    for pose_idx in bucket["pose_indices"]
+                    if int(pose_idx) in self.z_vars.get(group_id, {})
+                ]
+                self.model.Add(bucket_vars[bucket_id] == sum(pose_terms))
+            if bucket_vars:
+                self.model.Add(sum(bucket_vars.values()) == int(group["count"]))
 
-    # ------------------------------------------
-    # 1.3 Set Packing: 防碰撞 (§7.4.2)
-    # ------------------------------------------
-    def _add_set_packing_constraints(self):
-        """稀疏 Set Packing: 模板级聚合避免 59M literals 爆炸。
+        for tpl, bucket_defs in sorted(self._required_optional_signature_buckets.items()):
+            bucket_vars = self._required_optional_signature_count_vars.get(str(tpl), {})
+            for bucket in bucket_defs:
+                bucket_id = str(bucket["bucket_id"])
+                pose_terms = [
+                    self.optional_pose_vars[str(tpl)][int(pose_idx)]
+                    for pose_idx in bucket["pose_indices"]
+                    if int(pose_idx) in self.optional_pose_vars.get(str(tpl), {})
+                ]
+                self.model.Add(bucket_vars[bucket_id] == sum(pose_terms))
+            if bucket_vars:
+                self.model.Add(
+                    sum(bucket_vars.values())
+                    == int(self._exact_required_pose_optional_counts.get(str(tpl), 0))
+                )
 
-        旧策略: 每格 AtMostOne(z[i,p] for ALL instances i covering cell)
-                → 326 instances × ~36 poses/cell = ~12K vars/cell × 4900 cells = 59M literals
-        新策略: 先聚合 any_active[tpl,p] = OR(z[i,p] for i ∈ instances(tpl))
-                每格 AtMostOne(any_active[tpl,p]) → ~7 templates × ~20 poses/cell ≈ 140 vars/cell
-                → 4900 × 140 = 686K literals (86x 压缩)
+    def _add_set_packing_constraints(self) -> None:
+        self._populate_cell_occupancy_terms()
 
-        正确性: 若 any_active[tpl,p]=1 则恰有 1 个 instance 选了 pose p (由 ExactlyOne 保证)
-                AtMostOne(any_active...) 确保同一格不被两个不同(tpl,p)覆盖
+        for terms in self._cell_occupancy_terms.values():
+            if terms:
+                self.model.Add(sum(terms) <= 1)
+
+    def _add_ghost_rect_constraints(self) -> None:
+        if not self.ghost_rect:
+            self.build_stats["ghost_rect"] = {"enabled": False}
+            return
+
+        ghost_w, ghost_h = self.ghost_rect
+        rect_cover_terms: DefaultDict[Tuple[int, int], List[cp_model.IntVar]] = defaultdict(list)
+        self._ghost_domains.clear()
+        self.u_vars.clear()
+
+        for anchor_x in range(self.grid_w - ghost_w + 1):
+            for anchor_y in range(self.grid_h - ghost_h + 1):
+                rect_idx = len(self._ghost_domains)
+                cells = [
+                    (anchor_x + dx, anchor_y + dy)
+                    for dx in range(ghost_w)
+                    for dy in range(ghost_h)
+                ]
+                var = self.model.NewBoolVar(f"ghost__{anchor_x}_{anchor_y}_{ghost_w}_{ghost_h}")
+                self.u_vars[rect_idx] = var
+                self._ghost_domains.append(
+                    {
+                        "anchor": {"x": anchor_x, "y": anchor_y},
+                        "cells": cells,
+                    }
+                )
+                for cell in cells:
+                    rect_cover_terms[cell].append(var)
+
+        if not self.u_vars:
+            self.model.Add(0 == 1)
+            self.build_stats["ghost_rect"] = {
+                "enabled": True,
+                "placements": 0,
+                "reason": "rectangle larger than grid",
+            }
+            return
+
+        self.model.AddExactlyOne(list(self.u_vars.values()))
+        for cell, rect_terms in rect_cover_terms.items():
+            occupancy_terms = self._cell_occupancy_terms.get(cell, [])
+            self.model.Add(sum(occupancy_terms) + sum(rect_terms) <= 1)
+
+        self.build_stats["ghost_rect"] = {
+            "enabled": True,
+            "placements": len(self._ghost_domains),
+            "size": {"w": ghost_w, "h": ghost_h},
+        }
+
+    def _add_port_clearance_constraints(self) -> None:
+        """Exploratory heuristic（探索启发式） only.
+
+        严格精确路径不允许把“所有端口前方都必须畅通”这种近似假设
+        当成正式剪枝，因此 exact 模式跳过。
         """
-        import time as _time
-        t0 = _time.time()
 
-        # Phase 1: 模板级 cell → [pose_idx] 索引
-        tpl_cell_index: Dict[str, Dict[int, List[int]]] = {}
-        for tpl_key, pool in self.pools.items():
-            cell_map: Dict[int, List[int]] = defaultdict(list)
-            for p_idx, pose in enumerate(pool):
-                for cell in pose["occupied_cells"]:
-                    cell_key = cell[1] * 70 + cell[0]
-                    cell_map[cell_key].append(p_idx)
-            tpl_cell_index[tpl_key] = dict(cell_map)
+        if self.exact_mode:
+            self.build_stats["port_clearance"] = {"skipped_in_exact_mode": True}
+            return
 
-        # Phase 2: 模板级聚合变量 any_active[tpl][p_idx]
-        # any_active[tpl][p] = 1 iff 至少一个 tpl 类型 mandatory group / optional pose 占用了位姿 p
-        self._any_active: Dict[str, Dict[int, Any]] = {}
-        n_agg = 0
-        for tpl_key, groups in self._groups_by_template.items():
-            pool = self.pools.get(tpl_key, [])
-            if not pool:
-                continue
-            self._any_active[tpl_key] = {}
-            tpl_ord = self._template_ord.get(tpl_key, 0)
-            for p_idx in range(len(pool)):
-                z_list = [self.z_vars[group["group_id"]][p_idx] for group in groups]
-                if len(z_list) == 1:
-                    self._any_active[tpl_key][p_idx] = z_list[0]
-                else:
-                    agg = self.model.NewBoolVar(f"a_{tpl_ord}_{p_idx}")
-                    self.model.AddMaxEquality(agg, z_list)
-                    self._any_active[tpl_key][p_idx] = agg
-                    n_agg += 1
-
-        for tpl_key in self._pose_optional_templates:
-            pool = self.pools.get(tpl_key, [])
-            if not pool:
-                continue
-            self._any_active.setdefault(tpl_key, {})
-            for p_idx in range(len(pool)):
-                self._any_active[tpl_key][p_idx] = self.optional_pose_vars[tpl_key][p_idx]
-
-        elapsed_agg = _time.time() - t0
-
-        # Phase 3: 稀疏 AtMostOne (使用聚合变量)
-        n_constraints = 0
-        n_literals = 0
-        self._solid_occupied_cell: Dict[int, Any] = {}
-        cell_keys = set().union(*(cm.keys() for cm in tpl_cell_index.values()))
-        cell_keys.update(self._ghost_cell_vars.keys())
-        for cell_key in cell_keys:
-            z_list = []
-            for tpl_key, cell_map in tpl_cell_index.items():
-                if cell_key not in cell_map:
+        constraints = 0
+        for group in self._mandatory_groups:
+            group_id = group["group_id"]
+            tpl = group["facility_type"]
+            for pose_idx, z_var in self.z_vars[group_id].items():
+                fronts = self._heuristic_port_fronts.get(tpl, {}).get(pose_idx)
+                if fronts is None:
+                    self.model.Add(z_var == 0)
+                    constraints += 1
                     continue
-                agg_map = self._any_active.get(tpl_key, {})
-                for p_idx in cell_map[cell_key]:
-                    if p_idx in agg_map:
-                        z_list.append(agg_map[p_idx])
-            z_list.extend(self._ghost_cell_vars.get(cell_key, []))
+                for cell in fronts:
+                    occupancy_terms = [term for term in self._cell_occupancy_terms.get(cell, []) if term is not z_var]
+                    if occupancy_terms:
+                        self.model.Add(sum(occupancy_terms) + z_var <= 1)
+                        constraints += 1
 
-            if z_list:
-                if len(z_list) == 1:
-                    self._solid_occupied_cell[cell_key] = z_list[0]
-                else:
-                    occ = self.model.NewBoolVar(f"oc_{cell_key}")
-                    self.model.AddMaxEquality(occ, z_list)
-                    self._solid_occupied_cell[cell_key] = occ
-
-            if len(z_list) <= 1:
-                continue
-            self.model.AddAtMostOne(z_list)
-            n_constraints += 1
-            n_literals += len(z_list)
-
-        elapsed = _time.time() - t0
-        print(f"📐 [Set Packing·稀疏] {n_constraints} 约束, "
-              f"{n_literals:,} literals (聚合{n_agg}变量), "
-              f"耗时 {elapsed:.1f}s (聚合{elapsed_agg:.1f}s)")
-
-    def _add_port_clearance_constraints(self):
-        """Every machine port must face at least one free grid cell in the master layout."""
-        n_implications = 0
-        n_disabled = 0
-
-        for tpl_key, active_map in self._any_active.items():
-            pool = self.pools.get(tpl_key, [])
-            for p_idx, pose_active in active_map.items():
-                pose = pool[p_idx]
-                front_cell_keys = set()
-                feasible = True
-                for port in pose.get("input_port_cells", []) + pose.get("output_port_cells", []):
-                    dx, dy = DIR_DELTA[str(port["dir"])]
-                    fx = int(port["x"]) + dx
-                    fy = int(port["y"]) + dy
-                    if not (0 <= fx < 70 and 0 <= fy < 70):
-                        feasible = False
-                        break
-                    front_cell_keys.add(fy * 70 + fx)
-
-                if not feasible:
-                    self.model.Add(pose_active == 0)
-                    n_disabled += 1
+        for tpl, vars_by_pose in self.optional_pose_vars.items():
+            for pose_idx, z_var in vars_by_pose.items():
+                fronts = self._heuristic_port_fronts.get(tpl, {}).get(pose_idx)
+                if fronts is None:
+                    self.model.Add(z_var == 0)
+                    constraints += 1
                     continue
-
-                for cell_key in front_cell_keys:
-                    occ_var = self._solid_occupied_cell.get(cell_key)
-                    if occ_var is not None:
-                        self.model.Add(occ_var == 0).OnlyEnforceIf(pose_active)
-                        n_implications += 1
+                for cell in fronts:
+                    occupancy_terms = [term for term in self._cell_occupancy_terms.get(cell, []) if term is not z_var]
+                    if occupancy_terms:
+                        self.model.Add(sum(occupancy_terms) + z_var <= 1)
+                        constraints += 1
 
         self.build_stats["port_clearance"] = {
-            "implications": n_implications,
-            "disabled_poses": n_disabled,
-        }
-        print(
-            f"📐 [端口缓冲] {n_implications} 条缓冲蕴含, "
-            f"{n_disabled} 个位姿因端口出界被禁用"
-        )
-
-    # ------------------------------------------
-    # 1.4 供电覆盖蕴含 (§7.4.3) - 辅助变量方案
-    # ------------------------------------------
-    def _add_power_coverage_constraints(self):
-        """OPT-01: 模板级池化供电蕴含。
-
-        旧策略: powered[c] = max(z[pole_j,q]) for all j,q — 31.8M 变量引用
-        新策略:
-          Step A: any_pose[q] = OR(z[pole_1,q], ..., z[pole_50,q]) — 4761 个聚合变量
-          Step B: powered[c] = max(any_pose[q] for q covering c) — ~637K 变量引用
-          Step C: z[i,p] → powered[c]=1 (不变)
-
-        复杂度: O(50×4761) + O(4900×130) + O(269×18K×9) ≈ O(44M) vs 旧 O(78M)
-        关键突破: Step B 从 31.8M 降至 637K (50x 压缩)
-        """
-        pole_pool = self.pools.get("power_pole", [])
-        if not pole_pool:
-            return
-
-        t0 = time.time()
-
-        # Step A: 模板级聚合 — any_pose[q] = OR(全部 pole 实例在位姿 q 的 z 变量)
-        any_pose_active: Dict[int, Any] = {}
-        n_agg_links = 0
-        if "power_pole" in self.optional_pose_vars:
-            for q_idx, var in self.optional_pose_vars["power_pole"].items():
-                any_pose_active[q_idx] = var
-        else:
-            pole_instances = [
-                i for i in self._optional if i["facility_type"] == "power_pole"
-            ]
-            for q_idx in range(len(pole_pool)):
-                instance_z_list = [
-                    self.z_vars[pi["instance_id"]][q_idx]
-                    for pi in pole_instances
-                ]
-                if instance_z_list:
-                    agg_var = self.model.NewBoolVar(f"agg_pole_q{q_idx}")
-                    self.model.AddMaxEquality(agg_var, instance_z_list)
-                    any_pose_active[q_idx] = agg_var
-                    n_agg_links += len(instance_z_list)
-
-        elapsed_a = time.time() - t0
-
-        # Step B: powered[c] = max(any_pose[q] for q covering c)
-        self.powered_cell: Dict[int, Any] = {}
-        cell_to_covering_poses: Dict[int, set] = defaultdict(set)
-        for q_idx, pose in enumerate(pole_pool):
-            cov = pose.get("power_coverage_cells")
-            if cov:
-                for cell in cov:
-                    cell_key = cell[1] * 70 + cell[0]
-                    cell_to_covering_poses[cell_key].add(q_idx)
-
-        n_cell_links = 0
-        for cell_key, q_set in cell_to_covering_poses.items():
-            pc = self.model.NewBoolVar(f"pwrd_{cell_key}")
-            self.powered_cell[cell_key] = pc
-
-            covering_agg = [any_pose_active[q] for q in q_set if q in any_pose_active]
-            if covering_agg:
-                self.model.AddMaxEquality(pc, covering_agg)
-                n_cell_links += len(covering_agg)
-            else:
-                self.model.Add(pc == 0)
-
-        elapsed_b = time.time() - t0
-
-        # Step C (OPT-01 优化): 模板级预计算 + 位姿聚合
-        # 旧: z[i,p] → powered[c]=1 for each c => ~9 constraints/pose => 43M total
-        # 新: 预计算 all_occ_pwrd[tpl,p] = AND(powered[c]) per template-pose
-        #     z[i,p] → all_occ_pwrd[tpl,p] => 1 constraint/pose => ~4.7M total
-        n_imp = 0
-        n_disabled = 0
-
-        # 预计算: 每个模板的每个位姿 → (is_valid, cell_keys_list)
-        tpl_pose_info: Dict[str, List] = {}  # tpl -> [(is_valid, [cell_keys])]
-        for tpl in self._powered_types:
-            pool = self.pools.get(tpl, [])
-            pose_infos = []
-            for p_idx, pose in enumerate(pool):
-                cell_keys = [c[1] * 70 + c[0] for c in pose["occupied_cells"]]
-                is_valid = all(ck in self.powered_cell for ck in cell_keys)
-                pose_infos.append((is_valid, cell_keys))
-            tpl_pose_info[tpl] = pose_infos
-
-        # 对每个模板的有效位姿，创建聚合 AND 变量 (模板级共享)
-        tpl_agg_and: Dict[str, Dict[int, Any]] = {}  # tpl -> {p_idx: and_var}
-        for tpl, pose_infos in tpl_pose_info.items():
-            tpl_agg_and[tpl] = {}
-            for p_idx, (is_valid, cell_keys) in enumerate(pose_infos):
-                if not is_valid:
-                    continue
-                # 创建 AND(powered[c] for c in Occ(p))
-                pc_list = [self.powered_cell[ck] for ck in cell_keys]
-                if len(pc_list) == 1:
-                    tpl_agg_and[tpl][p_idx] = pc_list[0]
-                else:
-                    and_var = self.model.NewBoolVar(f"aopc_{tpl[:6]}_{p_idx}")
-                    # and_var = 1 iff all powered cells = 1
-                    self.model.AddMinEquality(and_var, pc_list)
-                    tpl_agg_and[tpl][p_idx] = and_var
-
-        # 每个模板-位姿只需受一次供电约束：
-        # 一旦该位姿被任一实例（或 pose-level optional）占用，则其占格必须全被供电。
-        for tpl in self._powered_types:
-            pose_infos = tpl_pose_info.get(tpl, [])
-            agg_map = tpl_agg_and.get(tpl, {})
-            any_active_map = self._any_active.get(tpl, {})
-            for p_idx, (is_valid, _) in enumerate(pose_infos):
-                pose_active = any_active_map.get(p_idx)
-                if pose_active is None:
-                    continue
-                if not is_valid:
-                    self.model.Add(pose_active == 0)
-                    n_disabled += 1
-                    continue
-                and_var = agg_map[p_idx]
-                self.model.Add(and_var == 1).OnlyEnforceIf(pose_active)
-                n_imp += 1
-
-        self._power_pose_info = tpl_pose_info
-        self._power_pose_and = tpl_agg_and
-
-        elapsed = time.time() - t0
-        n_aux = len(self.powered_cell)
-        n_agg = len(any_pose_active)
-        n_and = sum(len(v) for v in tpl_agg_and.values())
-        self.build_stats["power_coverage"] = {
-            "aggregate_pose_vars": n_agg,
-            "and_vars": n_and,
-            "powered_cells": n_aux,
-            "cell_links": n_cell_links,
-            "implications": n_imp,
-            "disabled_poses": n_disabled,
-        }
-        print(f"📐 [供电蕴含·OPT-01] {n_agg} 聚合变量, {n_and} AND变量, "
-              f"{n_aux} powered格, {n_cell_links} 格链接, "
-              f"{n_imp} 蕴含约束, {n_disabled} 位姿禁用, "
-              f"StepA={elapsed_a:.1f}s, 总耗时={elapsed:.1f}s")
-
-    # ------------------------------------------
-    # 1.5 对称性破除 (§7.5)
-    # ------------------------------------------
-    def _add_symmetry_breaking_constraints(self):
-        """Grouped encoding already removes permutation symmetry among mandatory clones."""
-        order_constraints = 0
-        index_link_terms = 0
-
-        # 可选实例瀑布式激活: x_k ≥ x_{k+1}
-        optional_by_type: Dict[str, List[str]] = defaultdict(list)
-        for inst in self._optional:
-            optional_by_type[inst["facility_type"]].append(inst["instance_id"])
-
-        for tpl, ids in optional_by_type.items():
-            ids_sorted = sorted(ids)
-            for k in range(len(ids_sorted) - 1):
-                self.model.Add(
-                    self.x_vars[ids_sorted[k]] >= self.x_vars[ids_sorted[k + 1]]
-                )
-                order_constraints += 1
-        self.build_stats["symmetry_breaking"] = {
-            "index_link_terms": index_link_terms,
-            "order_constraints": order_constraints,
+            "heuristic_constraints": constraints,
+            "mode": "exploratory",
         }
 
-    # ------------------------------------------
-    # 1.6 全局有效不等式 (§7.6)
-    # ------------------------------------------
-    def _add_global_valid_inequalities(self):
-        """供电桩最少数量下界。"""
-        # 全场需电机器总占地面积
-        total_powered_cells = 0
-        for inst in self.instances:
-            tpl = inst["facility_type"]
-            if tpl in self._powered_types:
-                dims = self.templates[tpl]["dimensions"]
-                total_powered_cells += dims["w"] * dims["h"]
+    def _add_power_coverage_constraints(self) -> None:
+        pole_vars = self.optional_pose_vars.get("power_pole", {})
+        constraints = 0
 
-        max_coverage = 144  # 12×12
-        min_poles = -(-total_powered_cells // max_coverage)  # ceil division
-
-        if "power_pole" in self.optional_pose_vars:
-            pole_vars = list(self.optional_pose_vars["power_pole"].values())
-        else:
-            pole_instances = [
-                i for i in self._optional if i["facility_type"] == "power_pole"
-            ]
-            pole_vars = [self.x_vars[i["instance_id"]] for i in pole_instances]
-
-        self.model.Add(sum(pole_vars) >= min_poles)
-        print(f"📐 [全局割] 供电桩下界: ≥ {min_poles} (覆盖 {total_powered_cells} 格)")
-
-    # ------------------------------------------
-    # 1.7 幽灵空地 (§7.4.1 u_r)
-    # ------------------------------------------
-    def _add_ghost_rect_constraints(self):
-        """幽灵空地矩形必须单选一个位置，且与所有刚体互斥。"""
-        from src.placement.placement_generator import generate_empty_rect_domain
-
-        w, h = self.ghost_rect
-        domains = generate_empty_rect_domain(w, h)
-        self._ghost_domains = domains
-        print(f"📐 [幽灵空地] {w}×{h} 矩形, {len(domains)} 个候选位置")
-
-        # 创建 u_r 变量
-        for r_idx in range(len(domains)):
-            self.u_vars[r_idx] = self.model.NewBoolVar(f"u_{r_idx}")
-
-        # 恰好选 1 个位置
-        self.model.AddExactlyOne(list(self.u_vars.values()))
-
-        # 构建 ghost cell → [u_r] 索引 (供 set_packing 使用)
-        self._ghost_cell_vars.clear()
-        for r_idx, domain in enumerate(domains):
-            for cell in domain["occupied_cells"]:
-                cell_key = cell[1] * 70 + cell[0]
-                self._ghost_cell_vars[cell_key].append(self.u_vars[r_idx])
-
-    # ------------------------------------------
-    # 2. 求解与切平面接口
-    # ------------------------------------------
-    def _infer_optional_template_from_solution_id(self, solution_id: str) -> Optional[str]:
-        for tpl, prefix in POSE_LEVEL_OPTIONAL_PREFIX.items():
-            if solution_id.startswith(f"{prefix}_"):
-                return tpl
-        return None
-
-    def _solve_power_pole_hint_subproblem(
-        self,
-        occupied_cells: Set[Tuple[int, int]],
-        reserved_front_cells: Set[Tuple[int, int]],
-        powered_targets: Set[Tuple[int, int]],
-        time_limit_seconds: float = 2.0,
-    ) -> Dict[str, Any]:
-        if self.skip_power_coverage or not powered_targets:
-            return {
-                "status": "TRIVIAL",
-                "selected_pose_indices": [],
-                "unreachable_cell": None,
-            }
-
-        pole_pool = self.pools.get("power_pole", [])
-        if not pole_pool:
-            return {
-                "status": "UNREACHABLE",
-                "selected_pose_indices": [],
-                "unreachable_cell": min(powered_targets),
-            }
-
-        pole_cap = sum(
-            1 for inst in self.source_instances
-            if not inst["is_mandatory"] and inst["facility_type"] == "power_pole"
-        )
-        if pole_cap <= 0:
-            return {
-                "status": "UNREACHABLE",
-                "selected_pose_indices": [],
-                "unreachable_cell": min(powered_targets),
-            }
-
-        submodel = cp_model.CpModel()
-        pose_vars: Dict[int, Any] = {}
-        cell_cover_vars: Dict[Tuple[int, int], List[Any]] = defaultdict(list)
-        occupied_cell_vars: Dict[Tuple[int, int], List[Any]] = defaultdict(list)
-
-        for p_idx, pose in enumerate(pole_pool):
-            pose_cells = {
-                (int(cell[0]), int(cell[1]))
-                for cell in pose.get("occupied_cells", [])
-            }
-            if pose_cells & occupied_cells:
-                continue
-            if pose_cells & reserved_front_cells:
-                continue
-
-            var = submodel.NewBoolVar(f"hp_{p_idx}")
-            pose_vars[p_idx] = var
-            for cell in pose_cells:
-                occupied_cell_vars[cell].append(var)
-            for cell in pose.get("power_coverage_cells", []):
-                cell_cover_vars[(int(cell[0]), int(cell[1]))].append(var)
-
-        for vars_for_cell in occupied_cell_vars.values():
-            if len(vars_for_cell) > 1:
-                submodel.AddAtMostOne(vars_for_cell)
-
-        for cell in powered_targets:
-            cover_vars = cell_cover_vars.get(cell, [])
-            if not cover_vars:
-                return {
-                    "status": "UNREACHABLE",
-                    "selected_pose_indices": [],
-                    "unreachable_cell": cell,
-                }
-            submodel.Add(sum(cover_vars) >= 1)
-
-        submodel.Add(sum(pose_vars.values()) <= pole_cap)
-        submodel.Minimize(sum(pose_vars.values()))
-
-        solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = time_limit_seconds
-        solver.parameters.num_workers = 8
-        solver.parameters.cp_model_probing_level = 0
-        status = solver.Solve(submodel)
-
-        if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            selected = [
-                p_idx for p_idx, var in pose_vars.items()
-                if solver.Value(var) == 1
-            ]
-            return {
-                "status": "FEASIBLE",
-                "selected_pose_indices": selected,
-                "unreachable_cell": None,
-            }
-
-        return {
-            "status": solver.StatusName(status),
-            "selected_pose_indices": [],
-            "unreachable_cell": None,
-        }
-
-    def build_greedy_solution_hint(self) -> Dict[str, int]:
-        if self._greedy_hint_cache is not None:
-            return dict(self._greedy_hint_cache)
-
-        def _group_priority(group: Dict[str, Any]) -> Tuple[int, int, int, str]:
-            tpl = group["facility_type"]
-            dims = self.templates[tpl]["dimensions"]
-            area = int(dims["w"]) * int(dims["h"])
-            special = 0
-            if tpl == "boundary_storage_port":
-                special = -3
-            elif tpl == "protocol_core":
-                special = -2
-            elif tpl == "manufacturing_5x5":
-                special = -1
-            return (special, -area, len(self.pools[tpl]), group["group_id"])
-
-        def _domain_anchor(domain: Dict[str, Any]) -> Tuple[int, int]:
-            anchor = domain.get("anchor")
-            if anchor:
-                return int(anchor["x"]), int(anchor["y"])
-            xs = [int(c[0]) for c in domain["occupied_cells"]]
-            ys = [int(c[1]) for c in domain["occupied_cells"]]
-            return min(xs), min(ys)
-
-        pole_cover_count: Dict[Tuple[int, int], int] = defaultdict(int)
-        pole_footprint_count: Dict[Tuple[int, int], int] = defaultdict(int)
-        for pole_pose in self.pools.get("power_pole", []):
-            for cell in pole_pose.get("power_coverage_cells", []):
-                pole_cover_count[(int(cell[0]), int(cell[1]))] += 1
-            for cell in pole_pose.get("occupied_cells", []):
-                pole_footprint_count[(int(cell[0]), int(cell[1]))] += 1
-
-        def _pose_candidate_order(tpl: str) -> List[int]:
-            pool = self.pools[tpl]
-            if tpl == "boundary_storage_port":
-                return list(range(len(pool)))
-
-            dims = self.templates[tpl]["dimensions"]
-            width = int(dims["w"])
-            height = int(dims["h"])
-
-            def _pose_score(p_idx: int) -> Tuple[Any, ...]:
-                pose = pool[p_idx]
-                ax, ay = _domain_anchor(pose)
-                cx = ax + width / 2.0
-                cy = ay + height / 2.0
-                center_distance = abs(cx - 35.0) + abs(cy - 35.0)
-                border_slack = min(cx, cy, 69.0 - cx, 69.0 - cy)
-                occupied_cells = _cell_set(pose, "occupied_cells")
-                coverability_min = min(
-                    (pole_cover_count[cell] for cell in occupied_cells),
-                    default=0,
-                )
-                coverability_sum = sum(
-                    pole_cover_count[cell] for cell in occupied_cells
-                )
-                pole_block_cost = sum(
-                    pole_footprint_count[cell] for cell in occupied_cells
-                )
-
-                if self.templates[tpl].get("needs_power", False):
-                    return (
-                        -coverability_min,
-                        -coverability_sum,
-                        pole_block_cost,
-                        center_distance,
-                        -border_slack,
-                        ay,
-                        ax,
-                    )
-
-                return (
-                    pole_block_cost,
-                    center_distance,
-                    -border_slack,
-                    ay,
-                    ax,
-                )
-
-            return sorted(range(len(pool)), key=_pose_score)
-
-        def _cell_set(pose: Dict[str, Any], key: str) -> Set[Tuple[int, int]]:
-            return {
-                (int(cell[0]), int(cell[1]))
-                for cell in (pose.get(key) or [])
-            }
-
-        def _front_cells(pose: Dict[str, Any]) -> Tuple[bool, Set[Tuple[int, int]]]:
-            front_cells: Set[Tuple[int, int]] = set()
-            for port in pose.get("input_port_cells", []) + pose.get("output_port_cells", []):
-                dx, dy = DIR_DELTA[str(port["dir"])]
-                fx = int(port["x"]) + dx
-                fy = int(port["y"]) + dy
-                if not (0 <= fx < 70 and 0 <= fy < 70):
-                    return False, set()
-                front_cells.add((fx, fy))
-            return True, front_cells
-
-        def _power_pole_cap() -> int:
-            return sum(
-                1 for inst in self.source_instances
-                if not inst["is_mandatory"] and inst["facility_type"] == "power_pole"
-            )
-
-        def _min_required_power_poles() -> int:
-            total_powered_cells = 0
-            for inst in self.instances:
-                tpl = inst["facility_type"]
-                if not self.templates[tpl].get("needs_power", False):
-                    continue
-                dims = self.templates[tpl]["dimensions"]
-                total_powered_cells += int(dims["w"]) * int(dims["h"])
-            if total_powered_cells <= 0:
-                return 0
-            max_coverage = 144  # 12x12
-            return -(-total_powered_cells // max_coverage)
-
-        def _select_power_poles(
-            occupied_cells: Set[Tuple[int, int]],
-            reserved_front_cells: Set[Tuple[int, int]],
-            powered_targets: Set[Tuple[int, int]],
-        ) -> Tuple[List[int], int]:
-            if self.skip_power_coverage or not powered_targets:
-                return [], 0
-
-            pole_pool = self.pools.get("power_pole", [])
-            cap = _power_pole_cap()
-            if not pole_pool or cap <= 0:
-                return [], len(powered_targets)
-
-            local_occupied = set(occupied_cells)
-            local_reserved = set(reserved_front_cells)
-            uncovered = set(powered_targets)
-            chosen_pose_indices: List[int] = []
-            chosen_set = set()
-            desired_count = min(_min_required_power_poles(), cap)
-
-            while uncovered and len(chosen_pose_indices) < desired_count:
-                best_choice = None
-                best_score = None
-
-                for p_idx, pose in enumerate(pole_pool):
-                    if p_idx in chosen_set:
-                        continue
-                    pose_cells = _cell_set(pose, "occupied_cells")
-                    fronts_ok, front_cells = _front_cells(pose)
-                    if not fronts_ok:
-                        continue
-                    if pose_cells & local_occupied:
-                        continue
-                    if pose_cells & local_reserved:
-                        continue
-                    if front_cells & local_occupied:
-                        continue
-
-                    covered = _cell_set(pose, "power_coverage_cells") & uncovered
-                    if not covered:
-                        continue
-
-                    anchor_x, anchor_y = _domain_anchor(pose)
-                    score = (len(covered), -anchor_y, -anchor_x)
-                    if best_score is None or score > best_score:
-                        best_score = score
-                        best_choice = (p_idx, pose_cells, front_cells, covered)
-
-                if best_choice is None:
-                    break
-
-                p_idx, pose_cells, front_cells, covered = best_choice
-                chosen_pose_indices.append(p_idx)
-                chosen_set.add(p_idx)
-                local_occupied.update(pose_cells)
-                local_reserved.update(front_cells)
-                uncovered.difference_update(covered)
-
-            while len(chosen_pose_indices) < desired_count:
-                best_choice = None
-                best_score = None
-
-                for p_idx, pose in enumerate(pole_pool):
-                    if p_idx in chosen_set:
-                        continue
-                    pose_cells = _cell_set(pose, "occupied_cells")
-                    fronts_ok, front_cells = _front_cells(pose)
-                    if not fronts_ok:
-                        continue
-                    if pose_cells & local_occupied:
-                        continue
-                    if pose_cells & local_reserved:
-                        continue
-                    if front_cells & local_occupied:
-                        continue
-
-                    anchor_x, anchor_y = _domain_anchor(pose)
-                    coverage_score = len(_cell_set(pose, "power_coverage_cells") & powered_targets)
-                    score = (coverage_score, -anchor_y, -anchor_x)
-                    if best_score is None or score > best_score:
-                        best_score = score
-                        best_choice = (p_idx, pose_cells, front_cells)
-
-                if best_choice is None:
-                    break
-
-                p_idx, pose_cells, front_cells = best_choice
-                chosen_pose_indices.append(p_idx)
-                chosen_set.add(p_idx)
-                local_occupied.update(pose_cells)
-                local_reserved.update(front_cells)
-
-            return chosen_pose_indices, len(uncovered)
-
-        group_by_id = {
-            group["group_id"]: group
-            for group in self._mandatory_groups
-        }
-        pose_candidate_orders = {
-            group["facility_type"]: _pose_candidate_order(group["facility_type"])
-            for group in self._mandatory_groups
-        }
-        pole_pose_cells = [
-            _cell_set(pose, "occupied_cells")
-            for pose in self.pools.get("power_pole", [])
-        ]
-        pole_pose_cover_cells = [
-            _cell_set(pose, "power_coverage_cells")
-            for pose in self.pools.get("power_pole", [])
-        ]
-
-        def _materialize_group_selection(
-            group_pose_selection: Dict[str, List[int]],
-            ghost_idx: Optional[int],
-        ) -> Optional[Dict[str, Any]]:
-            occupied_cells: Set[Tuple[int, int]] = set()
-            reserved_front_cells: Set[Tuple[int, int]] = set()
-            powered_targets: Set[Tuple[int, int]] = set()
-            occupied_owner: Dict[Tuple[int, int], str] = {}
-            reserved_owner: Dict[Tuple[int, int], Set[str]] = defaultdict(set)
-            hint: Dict[str, int] = {}
-            placed_instances = 0
-
-            if ghost_idx is not None:
-                for cell in self._ghost_domains[ghost_idx]["occupied_cells"]:
-                    xy = (int(cell[0]), int(cell[1]))
-                    occupied_cells.add(xy)
-                    occupied_owner[xy] = "__ghost__"
-
-            for group in sorted(self._mandatory_groups, key=_group_priority):
-                tpl = group["facility_type"]
-                chosen = list(group_pose_selection.get(group["group_id"], []))
-                if len(chosen) != group["count"]:
-                    return None
-
-                for p_idx in chosen:
-                    pose = self.pools[tpl][p_idx]
-                    cells = _cell_set(pose, "occupied_cells")
-                    fronts_ok, front_cells = _front_cells(pose)
-                    if not fronts_ok:
-                        return None
-                    if occupied_cells & cells:
-                        return None
-                    if reserved_front_cells & cells:
-                        return None
-                    if occupied_cells & front_cells:
-                        return None
-
-                    occupied_cells.update(cells)
-                    for cell in cells:
-                        occupied_owner[cell] = group["group_id"]
-                    for cell in front_cells:
-                        reserved_front_cells.add(cell)
-                        reserved_owner[cell].add(group["group_id"])
-                    if self.templates[tpl].get("needs_power", False):
-                        powered_targets.update(cells)
-
-                chosen_sorted = sorted(
-                    chosen,
-                    key=lambda p_idx: self.pools[tpl][p_idx]["pose_id"],
-                )
-                for iid, p_idx in zip(group["instance_ids"], chosen_sorted):
-                    hint[iid] = p_idx
-                placed_instances += len(chosen_sorted)
-
-            if ghost_idx is not None:
-                hint["__ghost__"] = ghost_idx
-
-            return {
-                "occupied_cells": occupied_cells,
-                "reserved_front_cells": reserved_front_cells,
-                "powered_targets": powered_targets,
-                "occupied_owner": occupied_owner,
-                "reserved_owner": reserved_owner,
-                "hint": hint,
-                "placed_instances": placed_instances,
-            }
-
-        def _analyze_power_reachability(
-            layout: Dict[str, Any],
-        ) -> Dict[str, Any]:
-            coverable_cells: Set[Tuple[int, int]] = set()
-            occupied_cells = layout["occupied_cells"]
-            reserved_front_cells = layout["reserved_front_cells"]
-
-            for pose_cells, cover_cells in zip(pole_pose_cells, pole_pose_cover_cells):
-                if pose_cells & occupied_cells:
-                    continue
-                if pose_cells & reserved_front_cells:
-                    continue
-                coverable_cells.update(cover_cells)
-
-            missing_cells = sorted(layout["powered_targets"] - coverable_cells)
-            first_missing = missing_cells[0] if missing_cells else None
-            blocking_groups: List[str] = []
-            if first_missing is not None:
-                groups = set()
-                for pose_cells, cover_cells in zip(pole_pose_cells, pole_pose_cover_cells):
-                    if first_missing not in cover_cells:
-                        continue
-                    overlap_occ = pose_cells & occupied_cells
-                    overlap_res = pose_cells & reserved_front_cells
-                    if not overlap_occ and not overlap_res:
-                        continue
-                    for cell in overlap_occ:
-                        groups.add(layout["occupied_owner"][cell])
-                    for cell in overlap_res:
-                        groups.update(layout["reserved_owner"][cell])
-                blocking_groups = sorted(groups)
-
-            return {
-                "coverable_count": len(layout["powered_targets"] & coverable_cells),
-                "powered_count": len(layout["powered_targets"]),
-                "first_missing": first_missing,
-                "blocking_groups": blocking_groups,
-            }
-
-        def _repair_group_selection_for_power(
-            group_pose_selection: Dict[str, List[int]],
-            ghost_idx: Optional[int],
-        ) -> Tuple[Dict[str, List[int]], Dict[str, Any], Dict[str, Any]]:
-            layout = _materialize_group_selection(group_pose_selection, ghost_idx)
-            if layout is None:
-                return group_pose_selection, {}, {
-                    "coverable_count": 0,
-                    "powered_count": 0,
-                    "first_missing": None,
-                    "blocking_groups": [],
-                }
-
-            analysis = _analyze_power_reachability(layout)
-            for _ in range(2):
-                if analysis["first_missing"] is None:
-                    break
-
-                best_selection = None
-                best_layout = None
-                best_analysis = None
-                best_score = None
-
-                for group_id in analysis["blocking_groups"][:6]:
-                    if group_id == "__ghost__":
-                        continue
-                    group = group_by_id.get(group_id)
-                    if group is None:
-                        continue
-                    tpl = group["facility_type"]
-                    selected = list(group_pose_selection[group_id])
-                    order = pose_candidate_orders[tpl]
-
-                    for old_idx in selected:
-                        old_anchor_x, old_anchor_y = _domain_anchor(self.pools[tpl][old_idx])
-                        alternatives = []
-                        for p_idx in order:
-                            if p_idx == old_idx:
-                                continue
-                            if p_idx in selected and p_idx != old_idx:
-                                continue
-                            anchor_x, anchor_y = _domain_anchor(self.pools[tpl][p_idx])
-                            move = abs(anchor_x - old_anchor_x) + abs(anchor_y - old_anchor_y)
-                            if move > 6:
-                                continue
-                            alternatives.append((move, p_idx))
-
-                        for move, alt_idx in alternatives[:24]:
-                            trial_selection = {
-                                gid: list(pose_list)
-                                for gid, pose_list in group_pose_selection.items()
-                            }
-                            trial_group = list(trial_selection[group_id])
-                            trial_group[trial_group.index(old_idx)] = alt_idx
-                            trial_selection[group_id] = trial_group
-
-                            trial_layout = _materialize_group_selection(
-                                trial_selection,
-                                ghost_idx,
-                            )
-                            if trial_layout is None:
-                                continue
-
-                            trial_analysis = _analyze_power_reachability(trial_layout)
-                            if trial_analysis["coverable_count"] <= analysis["coverable_count"]:
-                                continue
-
-                            score = (
-                                trial_analysis["coverable_count"],
-                                1 if trial_analysis["first_missing"] is None else 0,
-                                -move,
-                            )
-                            if best_score is None or score > best_score:
-                                best_score = score
-                                best_selection = trial_selection
-                                best_layout = trial_layout
-                                best_analysis = trial_analysis
-
-                if best_selection is None or best_layout is None or best_analysis is None:
-                    break
-
-                group_pose_selection = best_selection
-                layout = best_layout
-                analysis = best_analysis
-
-            return group_pose_selection, layout, analysis
-
-        beam_width = 3
-        group_seed_limit = 3
-        branch_group_budget = 4
-
-        def _state_signature(state: Dict[str, Any]) -> Tuple[Tuple[str, Tuple[int, ...]], ...]:
-            return tuple(
-                (
-                    group["group_id"],
-                    tuple(state["group_pose_selection"].get(group["group_id"], [])),
-                )
-                for group in sorted(self._mandatory_groups, key=_group_priority)
-            )
-
-        def _state_score(state: Dict[str, Any]) -> Tuple[int, int, int, int, int]:
-            return (
-                int(state["placed_instances"]),
-                int(state["completed_groups"]),
-                int(state["power_coverability_sum"]),
-                -len(state["reserved_front_cells"]),
-                -len(state["occupied_cells"]),
-            )
-
-        def _clone_state(state: Dict[str, Any]) -> Dict[str, Any]:
-            return {
-                "occupied_cells": set(state["occupied_cells"]),
-                "reserved_front_cells": set(state["reserved_front_cells"]),
-                "powered_targets": set(state["powered_targets"]),
-                "hint": dict(state["hint"]),
-                "group_pose_selection": {
-                    gid: list(pose_list)
-                    for gid, pose_list in state["group_pose_selection"].items()
-                },
-                "placed_instances": int(state["placed_instances"]),
-                "completed_groups": int(state["completed_groups"]),
-                "power_coverability_sum": int(state["power_coverability_sum"]),
-            }
-
-        def _make_initial_state(ghost_idx: Optional[int]) -> Dict[str, Any]:
-            occupied_cells: Set[Tuple[int, int]] = set()
-            hint: Dict[str, int] = {}
-            if ghost_idx is not None:
-                for cell in self._ghost_domains[ghost_idx]["occupied_cells"]:
-                    occupied_cells.add((int(cell[0]), int(cell[1])))
-                hint["__ghost__"] = ghost_idx
-            return {
-                "occupied_cells": occupied_cells,
-                "reserved_front_cells": set(),
-                "powered_targets": set(),
-                "hint": hint,
-                "group_pose_selection": {},
-                "placed_instances": 0,
-                "completed_groups": 0,
-                "power_coverability_sum": 0,
-            }
-
-        def _pose_fits_state(state: Dict[str, Any], pose: Dict[str, Any]) -> bool:
-            cells = _cell_set(pose, "occupied_cells")
-            fronts_ok, front_cells = _front_cells(pose)
-            if not fronts_ok:
-                return False
-            if state["occupied_cells"] & cells:
-                return False
-            if state["reserved_front_cells"] & cells:
-                return False
-            if state["occupied_cells"] & front_cells:
-                return False
-            return True
-
-        def _extend_state_with_group(
-            state: Dict[str, Any],
-            group: Dict[str, Any],
-            forced_first_idx: Optional[int] = None,
-        ) -> Dict[str, Any]:
-            tpl = group["facility_type"]
-            order = pose_candidate_orders[tpl]
-            new_state = _clone_state(state)
-            chosen: List[int] = []
-            chosen_set: Set[int] = set()
-
-            candidate_order: List[int] = []
-            if forced_first_idx is not None:
-                candidate_order.append(int(forced_first_idx))
-            candidate_order.extend(order)
-
-            for p_idx in candidate_order:
-                p_idx = int(p_idx)
-                if p_idx in chosen_set:
-                    continue
-                pose = self.pools[tpl][p_idx]
-                if not _pose_fits_state(new_state, pose):
-                    continue
-
-                cells = _cell_set(pose, "occupied_cells")
-                _, front_cells = _front_cells(pose)
-                chosen.append(p_idx)
-                chosen_set.add(p_idx)
-                new_state["occupied_cells"].update(cells)
-                new_state["reserved_front_cells"].update(front_cells)
-                if self.templates[tpl].get("needs_power", False):
-                    new_state["powered_targets"].update(cells)
-                    new_state["power_coverability_sum"] += sum(
-                        pole_cover_count[cell] for cell in cells
-                    )
-                if len(chosen) == group["count"]:
-                    break
-
-            chosen.sort(key=lambda p_idx: self.pools[tpl][p_idx]["pose_id"])
-            new_state["group_pose_selection"][group["group_id"]] = list(chosen)
-            for iid, p_idx in zip(group["instance_ids"], chosen):
-                new_state["hint"][iid] = p_idx
-            new_state["placed_instances"] += len(chosen)
-            if len(chosen) == group["count"]:
-                new_state["completed_groups"] += 1
-            return new_state
-
-        def _prune_states(states: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-            best_by_signature: Dict[Tuple[Tuple[str, Tuple[int, ...]], ...], Dict[str, Any]] = {}
-            for state in states:
-                signature = _state_signature(state)
-                incumbent = best_by_signature.get(signature)
-                if incumbent is None or _state_score(state) > _state_score(incumbent):
-                    best_by_signature[signature] = state
-            ranked = sorted(
-                best_by_signature.values(),
-                key=_state_score,
-                reverse=True,
-            )
-            return ranked[:beam_width]
-
-        def _build_state_for_ghost(ghost_idx: Optional[int]) -> Dict[str, Any]:
-            beam: List[Dict[str, Any]] = [_make_initial_state(ghost_idx)]
-            branched_groups = 0
-
-            for group in sorted(self._mandatory_groups, key=_group_priority):
-                next_states: List[Dict[str, Any]] = []
-                tpl = group["facility_type"]
-                should_branch = (
-                    branched_groups < branch_group_budget
-                    and (
-                        group["count"] >= 6
-                        or tpl in {
-                            "boundary_storage_port",
-                            "protocol_core",
-                            "manufacturing_5x5",
-                        }
-                    )
-                )
-
-                for state in beam:
-                    next_states.append(_extend_state_with_group(state, group))
-
-                    if should_branch:
-                        feasible_starts: List[int] = []
-                        for p_idx in pose_candidate_orders[tpl]:
-                            if not _pose_fits_state(state, self.pools[tpl][p_idx]):
-                                continue
-                            feasible_starts.append(int(p_idx))
-                            if len(feasible_starts) >= group_seed_limit:
-                                break
-
-                        for p_idx in feasible_starts[1:]:
-                            next_states.append(_extend_state_with_group(state, group, p_idx))
-
-                beam = _prune_states(next_states)
-                if should_branch:
-                    branched_groups += 1
-
-            return max(beam, key=_state_score)
-
-        candidate_ghost_indices = [None]
-        if self._ghost_domains:
-            anchor_to_idx = {
-                _domain_anchor(domain): idx
-                for idx, domain in enumerate(self._ghost_domains)
-            }
-            w, h = self.ghost_rect or (0, 0)
-            trial_anchors = [
-                (0, 0),
-                (0, 70 - h),
-                (70 - w, 0),
-                (70 - w, 70 - h),
-                ((70 - w) // 2, (70 - h) // 2),
-            ]
-            candidate_ghost_indices = []
-            seen = set()
-            for anchor in trial_anchors:
-                idx = anchor_to_idx.get(anchor)
-                if idx is not None and idx not in seen:
-                    candidate_ghost_indices.append(idx)
-                    seen.add(idx)
-            if self._ghost_domains:
-                last_idx = len(self._ghost_domains) - 1
-                if last_idx not in seen:
-                    candidate_ghost_indices.append(last_idx)
-            if not candidate_ghost_indices:
-                candidate_ghost_indices = [None]
-
-        best_hint: Dict[str, int] = {}
-        best_count = -1
-        best_ghost_idx = None
-        best_power_pose_indices: List[int] = []
-        best_uncovered_power_cells = 0
-        best_power_status = "SKIPPED"
-        best_unreachable_power_cell = None
-        best_completed_groups = 0
-
-        for ghost_idx in candidate_ghost_indices:
-            candidate_state = _build_state_for_ghost(ghost_idx)
-            occupied = set(candidate_state["occupied_cells"])
-            reserved_front_cells = set(candidate_state["reserved_front_cells"])
-            powered_targets = set(candidate_state["powered_targets"])
-            group_pose_selection = {
-                gid: list(pose_list)
-                for gid, pose_list in candidate_state["group_pose_selection"].items()
-            }
-            hint = dict(candidate_state["hint"])
-            placed_instances = int(candidate_state["placed_instances"])
-            completed_groups = int(candidate_state["completed_groups"])
-
-            repair_analysis = {
-                "coverable_count": 0,
-                "powered_count": len(powered_targets),
-                "first_missing": None,
-                "blocking_groups": [],
-            }
-            if placed_instances == len(self.instances):
-                (
-                    group_pose_selection,
-                    repaired_layout,
-                    repair_analysis,
-                ) = _repair_group_selection_for_power(
-                    group_pose_selection,
-                    ghost_idx,
-                )
-                if repaired_layout:
-                    occupied = repaired_layout["occupied_cells"]
-                    reserved_front_cells = repaired_layout["reserved_front_cells"]
-                    powered_targets = repaired_layout["powered_targets"]
-                    hint = repaired_layout["hint"]
-                    placed_instances = repaired_layout["placed_instances"]
-                    completed_groups = len(self._mandatory_groups)
-
-            power_hint = self._solve_power_pole_hint_subproblem(
-                occupied,
-                reserved_front_cells,
-                powered_targets,
-            )
-            if power_hint["status"] == "FEASIBLE":
-                power_pose_indices = list(power_hint["selected_pose_indices"])
-                uncovered_power_cells = 0
-            else:
-                power_pose_indices, uncovered_power_cells = _select_power_poles(
-                    occupied,
-                    reserved_front_cells,
-                    powered_targets,
-                )
-            candidate_score = (
-                placed_instances,
-                1 if power_hint["status"] == "FEASIBLE" else 0,
-                -uncovered_power_cells,
-                -len(power_pose_indices),
-            )
-            best_score = (
-                best_count,
-                1 if best_power_status == "FEASIBLE" else 0,
-                -best_uncovered_power_cells,
-                -len(best_power_pose_indices),
-            )
-            if candidate_score > best_score:
-                best_hint = hint
-                best_count = placed_instances
-                best_ghost_idx = ghost_idx
-                best_power_pose_indices = list(power_pose_indices)
-                best_uncovered_power_cells = uncovered_power_cells
-                best_power_status = str(power_hint["status"])
-                best_unreachable_power_cell = power_hint.get("unreachable_cell")
-                best_completed_groups = completed_groups
-                self.build_stats["greedy_hint_repair"] = {
-                    "coverable_power_cells": repair_analysis["coverable_count"],
-                    "powered_cells": repair_analysis["powered_count"],
-                    "first_missing": repair_analysis["first_missing"],
-                    "blocking_groups": repair_analysis["blocking_groups"][:6],
-                }
-
-        if best_ghost_idx is not None:
-            best_hint["__ghost__"] = best_ghost_idx
-        for pole_ord, p_idx in enumerate(best_power_pose_indices):
-            best_hint[f"power_pole_hint_{pole_ord:03d}"] = p_idx
-
-        self.build_stats["greedy_hint"] = {
-            "hinted_instances": max(best_count, 0),
-            "ghost_pose_idx": best_ghost_idx,
-            "hinted_power_poles": len(best_power_pose_indices),
-            "uncovered_power_cells": best_uncovered_power_cells,
-            "power_hint_status": best_power_status,
-            "unreachable_power_cell": best_unreachable_power_cell,
-            "completed_groups": best_completed_groups,
-            "beam_width": beam_width,
-            "group_seed_limit": group_seed_limit,
-            "branch_group_budget": branch_group_budget,
-        }
-        self._greedy_hint_cache = dict(best_hint)
-        return dict(best_hint)
-
-    def _add_exact_decision_strategies(self):
-        if self._exact_search_strategy_added:
-            return
-
-        hint = self.build_greedy_solution_hint()
-
-        def _split_vars(
-            var_map: Dict[int, Any],
-            preferred_indices: List[int],
-        ) -> Tuple[List[Any], List[Any]]:
-            preferred_vars: List[Any] = []
-            preferred_set = set()
-            for idx in preferred_indices:
-                idx = int(idx)
-                if idx in var_map and idx not in preferred_set:
-                    preferred_vars.append(var_map[idx])
-                    preferred_set.add(idx)
-            remaining_vars = [
-                var_map[idx]
-                for idx in sorted(var_map.keys())
-                if idx not in preferred_set
-            ]
-            return preferred_vars, remaining_vars
-
-        preferred_group_vars: List[Any] = []
-        remaining_group_zero_vars: List[Any] = []
-        remaining_group_fill_vars: List[Any] = []
         for group in self._mandatory_groups:
-            preferred = [
-                int(hint[iid])
-                for iid in group["instance_ids"]
-                if iid in hint
-            ]
-            preferred_vars, remaining_vars = _split_vars(
-                self.z_vars[group["group_id"]],
-                preferred,
-            )
-            preferred_group_vars.extend(preferred_vars)
-            if len(preferred_vars) < group["count"]:
-                remaining_group_fill_vars.extend(remaining_vars)
-            else:
-                remaining_group_zero_vars.extend(remaining_vars)
+            tpl = group["facility_type"]
+            if tpl not in self._powered_templates or tpl == "power_pole":
+                continue
+            group_id = group["group_id"]
+            pose_coverers = self._power_coverers_by_template_pose.get(tpl, {})
+            for pose_idx, z_var in self.z_vars[group_id].items():
+                coverers = pose_coverers.get(pose_idx, [])
+                if not coverers:
+                    self.model.Add(z_var == 0)
+                    constraints += 1
+                    continue
+                self.model.Add(sum(pole_vars[idx] for idx in coverers) >= z_var)
+                constraints += 1
 
-        preferred_optional_vars: List[Any] = []
-        remaining_optional_vars: List[Any] = []
-        for tpl in sorted(self.optional_pose_vars.keys()):
-            preferred = [
-                int(p_idx)
-                for hint_id, p_idx in hint.items()
-                if self._infer_optional_template_from_solution_id(str(hint_id)) == tpl
-            ]
-            preferred_vars, remaining_vars = _split_vars(
-                self.optional_pose_vars[tpl],
-                preferred,
-            )
-            preferred_optional_vars.extend(preferred_vars)
-            remaining_optional_vars.extend(remaining_vars)
+        for tpl, vars_by_pose in self.optional_pose_vars.items():
+            if tpl not in self._powered_templates or tpl == "power_pole":
+                continue
+            pose_coverers = self._power_coverers_by_template_pose.get(tpl, {})
+            for pose_idx, z_var in vars_by_pose.items():
+                coverers = pose_coverers.get(pose_idx, [])
+                if not coverers:
+                    self.model.Add(z_var == 0)
+                    constraints += 1
+                    continue
+                self.model.Add(sum(pole_vars[idx] for idx in coverers) >= z_var)
+                constraints += 1
 
-        preferred_ghost_vars: List[Any] = []
-        remaining_ghost_vars: List[Any] = []
-        if self.u_vars:
-            preferred = [int(hint["__ghost__"])] if "__ghost__" in hint else []
-            preferred_ghost_vars, remaining_ghost_vars = _split_vars(self.u_vars, preferred)
+        self.build_stats["power_coverage"] = {
+            "constraints": constraints,
+            "pole_cap": None if self.exact_mode else self._optional_cap_by_template.get("power_pole", 0),
+        }
 
-        if preferred_ghost_vars:
-            self.model.AddDecisionStrategy(
-                preferred_ghost_vars,
-                cp_model.CHOOSE_FIRST,
-                cp_model.SELECT_MAX_VALUE,
-            )
+    def _add_symmetry_breaking_constraints(self) -> None:
+        # Grouped encoding（分组编码） already removes clone permutations（克隆置换）.
+        self.build_stats["symmetry_breaking"] = {"grouped_encoding_only": True}
 
-        if preferred_group_vars:
-            self.model.AddDecisionStrategy(
-                preferred_group_vars,
-                cp_model.CHOOSE_FIRST,
-                cp_model.SELECT_MAX_VALUE,
-            )
+    def _ordered_groups_for_exact_search(self) -> List[Dict[str, Any]]:
+        if not self.exact_mode:
+            return list(self._mandatory_groups)
 
-        if remaining_group_fill_vars:
-            self.model.AddDecisionStrategy(
-                remaining_group_fill_vars,
-                cp_model.CHOOSE_FIRST,
-                cp_model.SELECT_MAX_VALUE,
-            )
+        candidate_counts: Dict[str, int] = {}
+        for group in self._mandatory_groups:
+            group_id = str(group["group_id"])
+            candidate_counts[group_id] = len(self._candidate_pose_indices_for_group(group))
 
-        if preferred_optional_vars:
-            self.model.AddDecisionStrategy(
-                preferred_optional_vars,
-                cp_model.CHOOSE_FIRST,
-                cp_model.SELECT_MAX_VALUE,
-            )
-
-        skipped_zero_tail_vars = (
-            len(remaining_group_zero_vars)
-            + len(remaining_optional_vars)
-            + len(remaining_ghost_vars)
+        return sorted(
+            self._mandatory_groups,
+            key=lambda group: (
+                int(candidate_counts.get(str(group["group_id"]), 0)),
+                str(group["facility_type"]),
+                str(group["group_id"]),
+            ),
         )
-        self.build_stats["exact_search_strategy"] = {
-            "guided_group_vars": len(preferred_group_vars),
-            "guided_optional_vars": len(preferred_optional_vars),
-            "guided_ghost_vars": len(preferred_ghost_vars),
-            "guided_group_fill_vars": len(remaining_group_fill_vars),
-            "skipped_group_zero_vars": len(remaining_group_zero_vars),
-            "skipped_optional_zero_vars": len(remaining_optional_vars),
-            "skipped_ghost_zero_vars": len(remaining_ghost_vars),
-            "skipped_zero_tail_vars": skipped_zero_tail_vars,
-            "search_branching": "PARTIAL_FIXED_SEARCH",
-            "strategy_sequence": [
-                "preferred_ghost",
-                "preferred_group",
-                "remaining_group_fill",
-                "preferred_optional",
+
+    def _ordered_optional_pose_indices(self, tpl: str) -> List[int]:
+        return sorted(
+            self.optional_pose_vars.get(tpl, {}),
+            key=lambda pose_idx: self._pose_sort_key(tpl, int(pose_idx)),
+        )
+
+    def _ordered_ghost_anchor_indices(self) -> List[int]:
+        return sorted(
+            self.u_vars,
+            key=lambda rect_idx: (
+                int(self._ghost_domains[int(rect_idx)]["anchor"]["x"]),
+                int(self._ghost_domains[int(rect_idx)]["anchor"]["y"]),
+                int(rect_idx),
+            ),
+        )
+
+    def _add_search_guidance(self) -> None:
+        if not self.exact_mode:
+            self.build_stats["search_guidance"] = {
+                "applied": False,
+                "profile": "default_automatic",
+                "reason": "exact-guided branching only runs in certified_exact mode",
+            }
+            return
+
+        mandatory_literals = 0
+        ghost_literals = 0
+        optional_literals: Dict[str, int] = {}
+        required_optional_literals: Dict[str, int] = {}
+        residual_optional_literals: Dict[str, int] = {}
+        mandatory_signature_counts: Dict[str, int] = {}
+        required_optional_signature_counts: Dict[str, int] = {}
+        mandatory_signature_count_literals = 0
+        required_optional_signature_count_literals = 0
+        required_optional_templates = [
+            tpl
+            for tpl in sorted(POSE_LEVEL_OPTIONAL_TEMPLATES)
+            if int(self._exact_required_pose_optional_counts.get(tpl, 0)) > 0
+        ]
+        required_optional_template_set = set(required_optional_templates)
+        ordered_groups = self._ordered_groups_for_exact_search()
+        for group in ordered_groups:
+            group_id = str(group["group_id"])
+            ordered_signature_count_vars = [
+                self._mandatory_signature_count_vars[group_id][str(bucket["bucket_id"])]
+                for bucket in self._mandatory_signature_buckets.get(group_id, [])
+                if str(bucket["bucket_id"]) in self._mandatory_signature_count_vars.get(group_id, {})
+            ]
+            if ordered_signature_count_vars:
+                self.model.AddDecisionStrategy(
+                    ordered_signature_count_vars,
+                    cp_model.CHOOSE_FIRST,
+                    cp_model.SELECT_MAX_VALUE,
+                )
+            mandatory_signature_counts[group_id] = len(ordered_signature_count_vars)
+            mandatory_signature_count_literals += len(ordered_signature_count_vars)
+            candidate_pose_set = {
+                int(pose_idx) for pose_idx in self._candidate_pose_indices_for_group(group)
+            }
+            ordered_pose_indices: List[int] = []
+            for bucket in self._mandatory_signature_buckets.get(group_id, []):
+                ordered_pose_indices.extend(
+                    int(pose_idx)
+                    for pose_idx in bucket["pose_indices"]
+                    if int(pose_idx) in candidate_pose_set
+                )
+            ordered_vars = [
+                self.z_vars[group_id][pose_idx]
+                for pose_idx in ordered_pose_indices
+                if pose_idx in self.z_vars.get(group_id, {})
+            ]
+            if not ordered_vars:
+                continue
+            self.model.AddDecisionStrategy(
+                ordered_vars,
+                cp_model.CHOOSE_FIRST,
+                cp_model.SELECT_MAX_VALUE,
+            )
+            mandatory_literals += len(ordered_vars)
+
+        ordered_ghost_indices = self._ordered_ghost_anchor_indices()
+        ghost_vars = [
+            self.u_vars[rect_idx]
+            for rect_idx in ordered_ghost_indices
+            if rect_idx in self.u_vars
+        ]
+        if ghost_vars:
+            self.model.AddDecisionStrategy(
+                ghost_vars,
+                cp_model.CHOOSE_FIRST,
+                cp_model.SELECT_MAX_VALUE,
+            )
+            ghost_literals = len(ghost_vars)
+
+        for tpl in required_optional_templates:
+            ordered_signature_count_vars = [
+                self._required_optional_signature_count_vars[tpl][str(bucket["bucket_id"])]
+                for bucket in self._required_optional_signature_buckets.get(tpl, [])
+                if str(bucket["bucket_id"])
+                in self._required_optional_signature_count_vars.get(tpl, {})
+            ]
+            if ordered_signature_count_vars:
+                self.model.AddDecisionStrategy(
+                    ordered_signature_count_vars,
+                    cp_model.CHOOSE_FIRST,
+                    cp_model.SELECT_MAX_VALUE,
+                )
+            required_optional_signature_counts[tpl] = len(ordered_signature_count_vars)
+            required_optional_signature_count_literals += len(ordered_signature_count_vars)
+            ordered_pose_indices: List[int] = []
+            for bucket in self._required_optional_signature_buckets.get(tpl, []):
+                ordered_pose_indices.extend(int(pose_idx) for pose_idx in bucket["pose_indices"])
+            ordered_vars = [
+                self.optional_pose_vars[tpl][pose_idx]
+                for pose_idx in ordered_pose_indices
+                if pose_idx in self.optional_pose_vars.get(tpl, {})
+            ]
+            if not ordered_vars:
+                required_optional_literals[tpl] = 0
+                optional_literals[tpl] = 0
+                continue
+            self.model.AddDecisionStrategy(
+                ordered_vars,
+                cp_model.CHOOSE_FIRST,
+                cp_model.SELECT_MAX_VALUE,
+            )
+            required_optional_literals[tpl] = len(ordered_vars)
+            optional_literals[tpl] = len(ordered_vars)
+
+        for tpl in sorted(POSE_LEVEL_OPTIONAL_TEMPLATES):
+            if tpl in required_optional_template_set:
+                continue
+            ordered_pose_indices = self._ordered_optional_pose_indices(tpl)
+            ordered_vars = [
+                self.optional_pose_vars[tpl][pose_idx]
+                for pose_idx in ordered_pose_indices
+                if pose_idx in self.optional_pose_vars.get(tpl, {})
+            ]
+            if not ordered_vars:
+                residual_optional_literals[tpl] = 0
+                optional_literals[tpl] = 0
+                continue
+            self.model.AddDecisionStrategy(
+                ordered_vars,
+                cp_model.CHOOSE_FIRST,
+                cp_model.SELECT_MIN_VALUE,
+            )
+            residual_optional_literals[tpl] = len(ordered_vars)
+            optional_literals[tpl] = len(ordered_vars)
+
+        self.build_stats["search_guidance"] = {
+            "applied": True,
+            "profile": "exact_signature_guided_branching_v2",
+            "search_branching": "FIXED_SEARCH",
+            "mandatory_group_order": [str(group["group_id"]) for group in ordered_groups],
+            "mandatory_signature_counts": {
+                str(k): int(v) for k, v in mandatory_signature_counts.items()
+            },
+            "mandatory_signature_count_literals": int(mandatory_signature_count_literals),
+            "mandatory_literals": int(mandatory_literals),
+            "ghost_literals": int(ghost_literals),
+            "required_optional_templates": [str(tpl) for tpl in required_optional_templates],
+            "required_optional_signature_counts": {
+                str(k): int(v) for k, v in required_optional_signature_counts.items()
+            },
+            "required_optional_signature_count_literals": int(
+                required_optional_signature_count_literals
+            ),
+            "required_optional_literals": {
+                str(k): int(v) for k, v in required_optional_literals.items()
+            },
+            "required_optional_default": "SELECT_MAX_VALUE",
+            "residual_optional_literals": {
+                str(k): int(v) for k, v in residual_optional_literals.items()
+            },
+            "residual_optional_default": "SELECT_MIN_VALUE",
+            "optional_literals": {str(k): int(v) for k, v in optional_literals.items()},
+            "optional_default": "SELECT_MIN_VALUE",
+        }
+
+    def _add_global_valid_inequalities(self) -> None:
+        stats: Dict[str, Any] = {
+            "exact_safe_only": True,
+            "applied": [],
+            "optional_cardinality_bounds": {},
+            "fixed_required_optional_demands": {},
+            "lower_bound_optional_powered_demands": {},
+            "powered_template_demands": {},
+            "capacity_cache": {
+                "scope": "process_memory",
+                "signature_hits": 0,
+                "signature_misses": 0,
+                "signature_count": len(_LOCAL_POWER_CAPACITY_COMPACT_CACHE),
+                "pole_template_evaluations": 0,
+                "signature_class_count": 0,
+                "signature_class_evaluations": 0,
+                "compact_signature_class_count": 0,
+                "compact_signature_class_evaluations": 0,
+                "compact_signature_hits": 0,
+                "compact_signature_misses": 0,
+                "rect_dp_evaluations": 0,
+                "rect_dp_cache_hits": 0,
+                "rect_dp_cache_misses": 0,
+                "rect_dp_state_merges": 0,
+                "rect_dp_peak_line_states": 0,
+                "rect_dp_peak_pos_states": 0,
+                "rect_dp_compiled_signatures": 0,
+                "rect_dp_compiled_start_options": 0,
+                "rect_dp_deduped_start_options": 0,
+                "rect_dp_compiled_line_subsets": 0,
+                "rect_dp_peak_line_subset_options": 0,
+                "rect_dp_v3_fallbacks": 0,
+                "bitset_oracle_evaluations": 0,
+                "bitset_fallbacks": 0,
+                "cpsat_fallbacks": 0,
+                "oracle": "rectangle_frontier_dp_v4",
+                "raw_pole_evaluations": 0,
+                "coefficient_source": "exact_rect_dp_cache_v7",
+                "shell_pair_count": 0,
+            },
+            "capacity_coeff_stats": {},
+            "power_capacity_families": {
+                "applied": False,
+                "family_count": 0,
+                "raw_pole_count": 0,
+                "coefficient_source": "exact_rect_dp_cache_v7",
+                "shell_pair_count": 0,
+                "compact_signature_class_count": 0,
+                "families": [],
+            },
+            "aggregated_power_capacity_terms": {
+                "applied": False,
+                "raw_nonzero_terms": 0,
+                "aggregated_nonzero_terms": 0,
+            },
+            "ghost_aware_via_pole_feasibility": {
+                "enabled": bool(self.ghost_rect),
+                "explicit_u_conditioning": False,
+            },
+            "notes": [
+                "No power-pole area lower bound is injected into certified exact mode.",
+                "Exploratory mode only keeps optional pose caps through assignment constraints.",
             ],
         }
+        self.build_stats["global_valid_inequalities"] = stats
+        if not self.exact_mode:
+            return
 
-        self._exact_search_strategy_added = True
+        self._add_exact_optional_cardinality_bounds(stats)
+        stats["fixed_required_optional_demands"] = self._exact_fixed_required_optional_powered_demands()
+        stats["lower_bound_optional_powered_demands"] = self._lower_bound_optional_powered_demands()
+        self._power_pole_family_count_vars = {}
+        if self.skip_power_coverage:
+            stats["notes"].append(
+                "Exact local power-capacity lower bounds are skipped when power coverage is disabled."
+            )
+            stats["power_capacity_families"]["reason"] = "power_coverage_skipped"
+            stats["aggregated_power_capacity_terms"]["reason"] = "power_coverage_skipped"
+            return
+
+        powered_template_demands = self._exact_powered_template_demands()
+        stats["powered_template_demands"] = dict(powered_template_demands)
+        if not powered_template_demands:
+            stats["power_capacity_families"]["reason"] = "no_powered_template_demands"
+            stats["aggregated_power_capacity_terms"]["reason"] = "no_powered_template_demands"
+            return
+
+        pole_vars = self.optional_pose_vars.get("power_pole", {})
+        coeff_stats: Dict[str, Any] = {}
+        cache_stats = dict(stats["capacity_cache"])
+        coeff_by_template_and_pole: Dict[str, Dict[int, int]] = {}
+        for tpl, demand in sorted(powered_template_demands.items()):
+            coeff_by_pole: Dict[int, int] = {}
+            for pole_idx in sorted(pole_vars):
+                coeff = self._exact_local_power_capacity_coefficient(tpl, int(pole_idx), cache_stats)
+                coeff_by_pole[int(pole_idx)] = coeff
+            positive_coeffs = [value for value in coeff_by_pole.values() if value > 0]
+            coeff_by_template_and_pole[tpl] = coeff_by_pole
+            coeff_stats[tpl] = {
+                "demand": demand,
+                "total_poles": len(coeff_by_pole),
+                "nonzero_poles": len(positive_coeffs),
+                "max_coeff": max(positive_coeffs) if positive_coeffs else 0,
+                "min_nonzero_coeff": min(positive_coeffs) if positive_coeffs else None,
+            }
+            stats["applied"].append(
+                {
+                    "type": "power_capacity_lower_bound",
+                    "template": tpl,
+                    "demand": demand,
+                    "nonzero_poles": coeff_stats[tpl]["nonzero_poles"],
+                }
+            )
+
+        family_members: DefaultDict[Tuple[Tuple[str, int], ...], List[int]] = defaultdict(list)
+        template_order = sorted(powered_template_demands)
+        for pole_idx in sorted(pole_vars):
+            family_key = tuple(
+                (tpl, int(coeff_by_template_and_pole.get(tpl, {}).get(int(pole_idx), 0)))
+                for tpl in template_order
+            )
+            family_members[family_key].append(int(pole_idx))
+
+        family_coefficients: Dict[str, Dict[str, int]] = {}
+        family_sizes: Dict[str, int] = {}
+        family_terms: Dict[str, cp_model.IntVar] = {}
+        for family_index, family_key in enumerate(sorted(family_members)):
+            family_id = f"family_{family_index:03d}"
+            members = sorted(family_members[family_key])
+            family_var = self.model.NewIntVar(
+                0,
+                len(members),
+                f"power_pole_family_count__{family_id}",
+            )
+            self.model.Add(sum(pole_vars[pole_idx] for pole_idx in members) == family_var)
+            self._power_pole_family_count_vars[family_id] = family_var
+            family_terms[family_id] = family_var
+            family_sizes[family_id] = len(members)
+            family_coefficients[family_id] = {
+                str(tpl): int(coeff)
+                for tpl, coeff in family_key
+            }
+
+        aggregated_nonzero_terms = 0
+        raw_nonzero_terms = sum(
+            int(template_stats["nonzero_poles"])
+            for template_stats in coeff_stats.values()
+        )
+        for tpl, demand in sorted(powered_template_demands.items()):
+            terms: List[cp_model.LinearExpr] = []
+            for family_id, family_var in family_terms.items():
+                coeff = int(family_coefficients[family_id].get(tpl, 0))
+                if coeff <= 0:
+                    continue
+                aggregated_nonzero_terms += 1
+                terms.append(coeff * family_var)
+
+            if terms:
+                self.model.Add(sum(terms) >= demand)
+            else:
+                self.model.Add(0 >= demand)
+
+        cache_stats["signature_count"] = len(_LOCAL_POWER_CAPACITY_COMPACT_CACHE)
+        stats["capacity_cache"] = cache_stats
+        stats["capacity_coeff_stats"] = coeff_stats
+        stats["power_capacity_families"] = {
+            "applied": True,
+            "family_count": len(family_members),
+            "raw_pole_count": len(pole_vars),
+            "coefficient_source": str(
+                cache_stats.get("coefficient_source", "exact_rect_dp_cache_v7")
+            ),
+            "shell_pair_count": int(cache_stats.get("shell_pair_count", 0)),
+            "compact_signature_class_count": int(
+                cache_stats.get("compact_signature_class_count", 0)
+            ),
+            "families": [
+                {
+                    "family_id": family_id,
+                    "size": int(family_sizes[family_id]),
+                    "coefficients": {
+                        str(tpl): int(coefficients[tpl])
+                        for tpl in template_order
+                    },
+                }
+                for family_id, coefficients in sorted(family_coefficients.items())
+            ],
+        }
+        stats["aggregated_power_capacity_terms"] = {
+            "applied": True,
+            "raw_nonzero_terms": int(raw_nonzero_terms),
+            "aggregated_nonzero_terms": int(aggregated_nonzero_terms),
+        }
+
+    def _required_generic_input_slot_total(self) -> int:
+        return sum(
+            int(v)
+            for v in self.generic_io_requirements.get("required_generic_inputs", {}).values()
+        )
+
+    def _mandatory_powered_nonpole_count(self) -> int:
+        return sum(
+            int(group["count"])
+            for group in self._mandatory_groups
+            if str(group["facility_type"]) in self._powered_templates
+            and str(group["facility_type"]) != "power_pole"
+        )
+
+    def _required_protocol_storage_box_lower_bound(self) -> int:
+        return int(self._certified_optional_lower_bounds.get("protocol_storage_box", 0))
+
+    def _certified_optional_slot_upper_bound(self, tpl: str) -> int:
+        tpl = str(tpl)
+        if tpl == "power_pole":
+            return 0
+        pool = list(self.facility_pools.get(tpl, []))
+        if not pool:
+            return 0
+        template = dict(self.templates.get(tpl, {}))
+        dims = dict(template.get("dimensions", {}))
+        width = int(dims.get("w", 0))
+        height = int(dims.get("h", 0))
+        area = int(width) * int(height)
+        if area <= 0:
+            return 0
+        candidate_pose_count = int(len(pool))
+        grid_area = int(self.grid_w) * int(self.grid_h)
+        geometric_upper_bound = int(grid_area // area)
+        return int(min(candidate_pose_count, geometric_upper_bound))
+
+    def _certified_optional_slot_upper_bounds(self) -> Dict[str, int]:
+        return {
+            str(tpl): int(self._certified_optional_slot_upper_bound(str(tpl)))
+            for tpl in sorted(POSE_LEVEL_OPTIONAL_TEMPLATES)
+            if str(tpl) != "power_pole"
+            and int(self._certified_optional_slot_upper_bound(str(tpl))) > 0
+        }
+
+    def _residual_optional_powered_slot_upper_bounds(self) -> Dict[str, int]:
+        return {
+            str(tpl): int(upper_bound)
+            for tpl, upper_bound in sorted(self._certified_optional_slot_upper_bounds().items())
+            if str(tpl) in self._powered_templates
+            and str(tpl) != "power_pole"
+            and int(self._exact_required_pose_optional_counts.get(str(tpl), 0)) <= 0
+        }
+
+    def _add_exact_optional_cardinality_bounds(self, stats: Dict[str, Any]) -> None:
+        optional_bounds: Dict[str, Any] = {}
+
+        protocol_box_vars = self.optional_pose_vars.get("protocol_storage_box", {})
+        required_generic_input_slots = self._required_generic_input_slot_total()
+        protocol_storage_box_count = self._required_protocol_storage_box_lower_bound()
+        protocol_box_terms = list(protocol_box_vars.values())
+        self.model.Add(sum(protocol_box_terms) >= int(protocol_storage_box_count))
+        optional_bounds["protocol_storage_box"] = {
+            "mode": "required_lower_bound",
+            "required_generic_input_slots": int(required_generic_input_slots),
+            "slots_per_pose": int(
+                get_operation_port_profile(
+                    POSE_LEVEL_OPTIONAL_OPERATIONS["protocol_storage_box"]
+                ).generic_input_slots
+            ),
+            "lower": int(protocol_storage_box_count),
+            "upper": None,
+            "candidate_pose_count": len(protocol_box_terms),
+        }
+        stats["applied"].append(
+            {
+                "type": "optional_cardinality_bound",
+                "template": "protocol_storage_box",
+                "mode": "required_lower_bound",
+                "lower": int(protocol_storage_box_count),
+                "upper": None,
+            }
+        )
+
+        power_pole_vars = self.optional_pose_vars.get("power_pole", {})
+        mandatory_powered_nonpole = self._mandatory_powered_nonpole_count()
+        optional_powered_templates = sorted(
+            tpl
+            for tpl in self.optional_pose_vars
+            if tpl != "power_pole" and tpl in self._powered_templates
+        )
+        optional_powered_terms = [
+            var
+            for tpl in optional_powered_templates
+            for var in self.optional_pose_vars.get(tpl, {}).values()
+        ]
+        self.model.Add(
+            sum(power_pole_vars.values())
+            <= int(mandatory_powered_nonpole) + sum(optional_powered_terms)
+        )
+        optional_bounds["power_pole"] = {
+            "mode": "selected_powered_upper_bound",
+            "lower": 0,
+            "candidate_pose_count": len(power_pole_vars),
+            "mandatory_powered_nonpole": int(mandatory_powered_nonpole),
+            "optional_powered_templates": optional_powered_templates,
+        }
+        stats["applied"].append(
+            {
+                "type": "optional_cardinality_bound",
+                "template": "power_pole",
+                "mode": "selected_powered_upper_bound",
+                "mandatory_powered_nonpole": int(mandatory_powered_nonpole),
+                "optional_powered_templates": optional_powered_templates,
+            }
+        )
+        stats["optional_cardinality_bounds"] = optional_bounds
+
+    def _pose_sort_key(self, tpl: str, pose_idx: int) -> Tuple[int, int, str, int]:
+        pose = self.facility_pools[tpl][pose_idx]
+        anchor = dict(pose.get("anchor", {}))
+        return (
+            int(anchor.get("x", 0)),
+            int(anchor.get("y", 0)),
+            str(pose.get("pose_id", "")),
+            int(pose_idx),
+        )
+
+    def _pose_cells(self, tpl: str, pose_idx: int) -> Set[Tuple[int, int]]:
+        return set(self._pose_cells_by_template_pose.get(tpl, {}).get(pose_idx, frozenset()))
+
+    def _exact_powered_template_demands(self) -> Dict[str, int]:
+        counts: Dict[str, int] = defaultdict(int)
+        for group in self._mandatory_groups:
+            tpl = str(group["facility_type"])
+            if tpl in self._powered_templates and tpl != "power_pole":
+                counts[tpl] += int(group["count"])
+        for tpl, count in self._lower_bound_optional_powered_demands().items():
+            counts[str(tpl)] += int(count)
+        return dict(sorted(counts.items()))
+
+    def _lower_bound_optional_powered_demands(self) -> Dict[str, int]:
+        return {
+            str(tpl): int(count)
+            for tpl, count in sorted(self._certified_optional_lower_bounds.items())
+            if int(count) > 0 and str(tpl) in self._powered_templates and str(tpl) != "power_pole"
+        }
+
+    def _exact_fixed_required_optional_powered_demands(self) -> Dict[str, int]:
+        return {
+            str(tpl): int(count)
+            for tpl, count in sorted(self._exact_required_pose_optional_counts.items())
+            if int(count) > 0 and str(tpl) in self._powered_templates and str(tpl) != "power_pole"
+        }
+
+    def _materialize_local_power_capacity_signature_for_pole(
+        self,
+        tpl: str,
+        pole_idx: int,
+    ) -> LocalCapacitySignature:
+        tpl = str(tpl)
+        origin_x, origin_y = self._pose_anchor_by_template_pose.get("power_pole", {}).get(
+            int(pole_idx),
+            (0, 0),
+        )
+        pose_anchors = self._pose_anchor_by_template_pose.get(tpl, {})
+        pose_local_cells = self._pose_local_cells_by_template_pose.get(tpl, {})
+        supported_by_pole = self._power_supported_pose_indices_by_template_pole.get(tpl, {})
+
+        relative_shapes: List[LocalPoseShape] = []
+        for pose_idx in supported_by_pole.get(int(pole_idx), []):
+            anchor_x, anchor_y = pose_anchors.get(int(pose_idx), (0, 0))
+            delta_x = int(anchor_x) - int(origin_x)
+            delta_y = int(anchor_y) - int(origin_y)
+            local_cells = pose_local_cells.get(int(pose_idx), tuple())
+            relative_shapes.append(
+                tuple(
+                    (int(cell_x) + delta_x, int(cell_y) + delta_y)
+                    for cell_x, cell_y in local_cells
+                )
+            )
+        return tuple(sorted(relative_shapes))
+
+    def _materialize_local_power_capacity_signature_from_compact(
+        self,
+        tpl: str,
+        compact_signature: CompactLocalCapacitySignature,
+    ) -> LocalCapacitySignature:
+        tpl = str(tpl)
+        local_shapes = self._local_shape_by_template_token.get(tpl, {})
+        relative_shapes: List[LocalPoseShape] = []
+        for delta_x, delta_y, shape_token in compact_signature:
+            local_shape = local_shapes.get(int(shape_token))
+            if local_shape is None:
+                raise RuntimeError(
+                    f"Missing local shape token {shape_token} for template {tpl}"
+                )
+            relative_shapes.append(
+                tuple(
+                    (int(cell_x) + int(delta_x), int(cell_y) + int(delta_y))
+                    for cell_x, cell_y in local_shape
+                )
+            )
+        return tuple(sorted(relative_shapes))
+
+    def _compact_local_power_capacity_signature(
+        self,
+        tpl: str,
+        pole_idx: int,
+    ) -> CompactLocalCapacitySignature:
+        tpl = str(tpl)
+        cached = self._compact_local_power_capacity_signature_by_template_pole.get(
+            tpl,
+            {},
+        ).get(int(pole_idx))
+        if cached is not None:
+            return cached
+        self._build_local_power_capacity_signature_classes(tpl)
+        return self._compact_local_power_capacity_signature_by_template_pole.get(
+            tpl,
+            {},
+        ).get(int(pole_idx), tuple())
+
+    def _local_power_capacity_signature(self, tpl: str, pole_idx: int) -> LocalCapacitySignature:
+        tpl = str(tpl)
+        cached = self._local_power_capacity_signature_by_template_pole.get(tpl, {}).get(
+            int(pole_idx)
+        )
+        if cached is not None:
+            return cached
+        self._build_local_power_capacity_signature_classes(tpl)
+        return self._local_power_capacity_signature_by_template_pole.get(tpl, {}).get(
+            int(pole_idx),
+            tuple(),
+        )
+
+    def _build_local_power_capacity_signature_classes(
+        self,
+        tpl: str,
+    ) -> Dict[LocalCapacitySignature, List[int]]:
+        tpl = str(tpl)
+        cached = self._power_pole_pose_indices_by_template_capacity_signature.get(tpl)
+        if cached is not None:
+            return cached
+
+        pole_count = int(len(self.facility_pools.get("power_pole", [])))
+        power_pole_anchors = self._pose_anchor_by_template_pose.get("power_pole", {})
+        pose_anchors = self._pose_anchor_by_template_pose.get(tpl, {})
+        pose_shape_tokens = self._pose_local_shape_token_by_template_pose.get(tpl, {})
+        supported_by_pole = self._power_supported_pose_indices_by_template_pole.get(tpl, {})
+
+        signature_by_pole: Dict[int, LocalCapacitySignature] = {}
+        compact_signature_by_pole: Dict[int, CompactLocalCapacitySignature] = {}
+        grouped_pose_indices_by_compact: DefaultDict[
+            CompactLocalCapacitySignature,
+            List[int],
+        ] = defaultdict(list)
+        for pole_idx in range(pole_count):
+            origin_x, origin_y = power_pole_anchors.get(int(pole_idx), (0, 0))
+            compact_items: List[CompactLocalCapacityItem] = []
+            for pose_idx in supported_by_pole.get(int(pole_idx), []):
+                anchor_x, anchor_y = pose_anchors.get(int(pose_idx), (0, 0))
+                delta_x = int(anchor_x) - int(origin_x)
+                delta_y = int(anchor_y) - int(origin_y)
+                shape_token = pose_shape_tokens.get(int(pose_idx))
+                if shape_token is None:
+                    raise RuntimeError(
+                        f"Missing local shape token for template {tpl} pose {pose_idx}"
+                    )
+                compact_items.append(
+                    (int(delta_x), int(delta_y), int(shape_token))
+                )
+            compact_signature = tuple(sorted(compact_items))
+            compact_signature_by_pole[int(pole_idx)] = compact_signature
+            grouped_pose_indices_by_compact[compact_signature].append(int(pole_idx))
+
+        grouped_pose_indices: DefaultDict[LocalCapacitySignature, List[int]] = defaultdict(list)
+        legacy_by_compact: Dict[CompactLocalCapacitySignature, LocalCapacitySignature] = {}
+        compact_by_legacy: Dict[LocalCapacitySignature, CompactLocalCapacitySignature] = {}
+        for compact_signature, pose_indices in sorted(grouped_pose_indices_by_compact.items()):
+            legacy_signature = self._materialize_local_power_capacity_signature_from_compact(
+                tpl,
+                compact_signature,
+            )
+            representative_signature = self._materialize_local_power_capacity_signature_for_pole(
+                tpl,
+                int(pose_indices[0]),
+            )
+            if legacy_signature != representative_signature:
+                raise RuntimeError(
+                    f"Compact local-capacity signature mismatch for template {tpl}"
+                )
+            existing_compact = compact_by_legacy.get(legacy_signature)
+            if existing_compact is not None and existing_compact != compact_signature:
+                raise RuntimeError(
+                    f"Distinct compact local-capacity signatures map to the same legacy signature for template {tpl}"
+                )
+            compact_by_legacy[legacy_signature] = compact_signature
+            legacy_by_compact[compact_signature] = legacy_signature
+            ordered_pose_indices = sorted(
+                pose_indices,
+                key=lambda idx: self._pose_sort_key("power_pole", int(idx)),
+            )
+            grouped_pose_indices[legacy_signature].extend(ordered_pose_indices)
+            for pole_idx in ordered_pose_indices:
+                signature_by_pole[int(pole_idx)] = legacy_signature
+
+        self._local_power_capacity_signature_by_template_pole[tpl] = signature_by_pole
+        self._compact_local_power_capacity_signature_by_template_pole[tpl] = (
+            compact_signature_by_pole
+        )
+        self._power_pole_pose_indices_by_template_capacity_signature[tpl] = {
+            signature: sorted(
+                pose_indices,
+                key=lambda idx: self._pose_sort_key("power_pole", int(idx)),
+            )
+            for signature, pose_indices in sorted(grouped_pose_indices.items())
+        }
+        self._power_pole_pose_indices_by_template_compact_capacity_signature[tpl] = {
+            compact_signature: sorted(
+                pose_indices,
+                key=lambda idx: self._pose_sort_key("power_pole", int(idx)),
+            )
+            for compact_signature, pose_indices in sorted(grouped_pose_indices_by_compact.items())
+        }
+        self._legacy_local_power_capacity_signature_by_template_compact_signature[tpl] = (
+            legacy_by_compact
+        )
+        return self._power_pole_pose_indices_by_template_capacity_signature[tpl]
+
+    def _solve_exact_local_power_capacity_cpsat(
+        self,
+        tpl: str,
+        signature: LocalCapacitySignature,
+    ) -> int:
+        if not signature:
+            return 0
+
+        cache_key = (str(tpl), signature)
+        cached = _LOCAL_POWER_CAPACITY_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
+        local_model = cp_model.CpModel()
+        local_vars = [
+            local_model.NewBoolVar(f"local_power_cap__{tpl}__{idx}")
+            for idx in range(len(signature))
+        ]
+        cell_terms: DefaultDict[Tuple[int, int], List[cp_model.IntVar]] = defaultdict(list)
+        for idx, relative_cells in enumerate(signature):
+            for cell in relative_cells:
+                cell_terms[cell].append(local_vars[idx])
+        for terms in cell_terms.values():
+            if len(terms) > 1:
+                local_model.Add(sum(terms) <= 1)
+        local_model.Maximize(sum(local_vars))
+
+        solver = cp_model.CpSolver()
+        solver.parameters.num_search_workers = 8
+        status = solver.Solve(local_model)
+        if status != cp_model.OPTIMAL:
+            raise RuntimeError(
+                f"Failed to compute exact local power capacity for template {tpl}: {solver.StatusName(status)}"
+            )
+        capacity = int(round(solver.ObjectiveValue()))
+        _LOCAL_POWER_CAPACITY_CACHE[cache_key] = capacity
+        return capacity
+
+    def _solve_exact_local_power_capacity_bitset_mis(
+        self,
+        tpl: str,
+        signature: LocalCapacitySignature,
+    ) -> int:
+        if not signature:
+            return 0
+
+        unique_shapes = list(dict.fromkeys(signature))
+        if len(unique_shapes) <= 1:
+            return int(len(unique_shapes))
+
+        try:
+            min_x = min(cell_x for shape in unique_shapes for cell_x, _ in shape)
+            min_y = min(cell_y for shape in unique_shapes for _, cell_y in shape)
+            max_x = max(cell_x for shape in unique_shapes for cell_x, _ in shape)
+        except ValueError as exc:
+            raise _BitsetLocalCapacityFallback(
+                f"Unsupported empty local-capacity shape for template {tpl}"
+            ) from exc
+
+        width = int(max_x - min_x + 1)
+        if width <= 0:
+            raise _BitsetLocalCapacityFallback(
+                f"Invalid local-capacity bitset width for template {tpl}"
+            )
+
+        bitsets: List[int] = []
+        seen_bitsets: Set[int] = set()
+        for shape in unique_shapes:
+            bitset = 0
+            for cell_x, cell_y in shape:
+                bit_index = (int(cell_y) - int(min_y)) * width + (int(cell_x) - int(min_x))
+                bitset |= 1 << int(bit_index)
+            if bitset <= 0:
+                raise _BitsetLocalCapacityFallback(
+                    f"Unsupported zero-bit local-capacity shape for template {tpl}"
+                )
+            if bitset not in seen_bitsets:
+                seen_bitsets.add(bitset)
+                bitsets.append(bitset)
+
+        vertex_count = len(bitsets)
+        if vertex_count <= 1:
+            return int(vertex_count)
+
+        adjacency = [0] * vertex_count
+        for left in range(vertex_count):
+            left_bits = bitsets[left]
+            for right in range(left + 1, vertex_count):
+                if left_bits & bitsets[right]:
+                    adjacency[left] |= 1 << right
+                    adjacency[right] |= 1 << left
+
+        max_iterations = int(self._local_power_capacity_bitset_max_iterations)
+        iteration_count = 0
+        memo: Dict[int, int] = {}
+
+        def split_components(mask: int) -> List[int]:
+            components: List[int] = []
+            remaining = int(mask)
+            while remaining:
+                seed = remaining & -remaining
+                component = 0
+                frontier = seed
+                while frontier:
+                    bit = frontier & -frontier
+                    frontier &= ~bit
+                    if component & bit:
+                        continue
+                    component |= bit
+                    idx = bit.bit_length() - 1
+                    frontier |= adjacency[idx] & remaining & ~component
+                components.append(component)
+                remaining &= ~component
+            return components
+
+        def solve_component(mask: int) -> int:
+            nonlocal iteration_count
+            iteration_count += 1
+            if iteration_count > max_iterations:
+                raise _BitsetLocalCapacityFallback(
+                    f"Bitset MIS iteration limit exceeded for template {tpl}"
+                )
+            if mask == 0:
+                return 0
+            cached = memo.get(mask)
+            if cached is not None:
+                return cached
+
+            forced = 0
+            reduced = int(mask)
+            while reduced:
+                isolated = 0
+                remaining = int(reduced)
+                while remaining:
+                    bit = remaining & -remaining
+                    remaining &= ~bit
+                    idx = bit.bit_length() - 1
+                    if (adjacency[idx] & reduced) == 0:
+                        isolated |= bit
+                if isolated == 0:
+                    break
+                forced += isolated.bit_count()
+                reduced &= ~isolated
+            if reduced == 0:
+                memo[mask] = forced
+                return forced
+
+            components = split_components(reduced)
+            if len(components) > 1:
+                total = forced + sum(solve_component(component) for component in components)
+                memo[mask] = total
+                return total
+
+            branch_vertex = -1
+            branch_degree = -1
+            remaining = int(reduced)
+            while remaining:
+                bit = remaining & -remaining
+                remaining &= ~bit
+                idx = bit.bit_length() - 1
+                degree = int((adjacency[idx] & reduced).bit_count())
+                if degree > branch_degree:
+                    branch_degree = degree
+                    branch_vertex = idx
+            if branch_vertex < 0:
+                memo[mask] = forced + reduced.bit_count()
+                return memo[mask]
+            if branch_degree <= 0:
+                memo[mask] = forced + reduced.bit_count()
+                return memo[mask]
+
+            branch_bit = 1 << branch_vertex
+            include_value = forced + 1 + solve_component(
+                reduced & ~adjacency[branch_vertex] & ~branch_bit
+            )
+            exclude_mask = reduced & ~branch_bit
+            if exclude_mask.bit_count() <= include_value - forced:
+                memo[mask] = include_value
+                return include_value
+            exclude_value = forced + solve_component(exclude_mask)
+            best = max(include_value, exclude_value)
+            memo[mask] = best
+            return best
+
+        return int(solve_component((1 << vertex_count) - 1))
+
+    def _normalize_rectangle_frontier_signature(
+        self,
+        tpl: str,
+        compact_signature: CompactLocalCapacitySignature,
+    ) -> Tuple[Tuple[int, int, int, int], ...]:
+        if not compact_signature:
+            return tuple()
+        rect_variants = self._ensure_local_rectangle_variants(tpl)
+        placements: Set[Tuple[int, int, int, int]] = set()
+        for delta_x, delta_y, shape_token in compact_signature:
+            variant = rect_variants.get(int(shape_token))
+            if variant is None:
+                raise _RectangleFrontierDPFallback(
+                    f"Non-rectangular local shape token {shape_token} for template {tpl}"
+                )
+            placements.add(
+                (
+                    int(delta_x) + int(variant.min_x),
+                    int(delta_y) + int(variant.min_y),
+                    int(variant.width),
+                    int(variant.height),
+                )
+            )
+        if not placements:
+            return tuple()
+        min_x = min(int(x_val) for x_val, _, _, _ in placements)
+        min_y = min(int(y_val) for _, y_val, _, _ in placements)
+        normalized = {
+            (
+                int(x_val) - int(min_x),
+                int(y_val) - int(min_y),
+                int(width),
+                int(height),
+            )
+            for x_val, y_val, width, height in placements
+        }
+        return tuple(sorted(normalized))
+
+    def _rectangle_frontier_scan_stats(
+        self,
+        normalized: Sequence[Tuple[int, int, int, int]],
+    ) -> Tuple[int, int]:
+        if not normalized:
+            return 0, 0
+        window_w = max(int(x_val) + int(width) for x_val, _, width, _ in normalized)
+        window_h = max(int(y_val) + int(height) for _, y_val, _, height in normalized)
+        max_rect_w = max(int(width) for _, _, width, _ in normalized)
+        max_rect_h = max(int(height) for _, _, _, height in normalized)
+        row_frontier_bits = int(window_w) * max(0, int(max_rect_h) - 1)
+        col_frontier_bits = int(window_h) * max(0, int(max_rect_w) - 1)
+        return int(row_frontier_bits), int(col_frontier_bits)
+
+    def _should_use_rectangle_frontier_dp_v4(
+        self,
+        compiled: _CompiledRectangleFrontierDP,
+    ) -> bool:
+        return (
+            int(compiled.peak_line_subset_options)
+            <= int(self._local_power_capacity_rect_dp_v4_max_peak_line_subset_options)
+            and int(compiled.compiled_line_subsets)
+            <= int(self._local_power_capacity_rect_dp_v4_max_compiled_line_subsets)
+        )
+
+    def _is_manufacturing_6x4_mixed_signature(
+        self,
+        tpl: str,
+        compact_signature: CompactLocalCapacitySignature,
+    ) -> bool:
+        if str(tpl) != "manufacturing_6x4":
+            return False
+        normalized = self._normalize_rectangle_frontier_signature(str(tpl), compact_signature)
+        if not normalized:
+            return False
+        variants = {(int(width), int(height)) for _, _, width, height in normalized}
+        return variants == {(6, 4), (4, 6)}
+
+    def _compile_manufacturing_6x4_mixed_cpsat_data(
+        self,
+        tpl: str,
+        compact_signature: CompactLocalCapacitySignature,
+    ) -> _CompiledManufacturing6x4MixedCpSatData:
+        cache_key = (str(tpl), compact_signature)
+        cached = _LOCAL_POWER_CAPACITY_M6X4_MIXED_CPSAT_DATA_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
+        normalized = self._normalize_rectangle_frontier_signature(str(tpl), compact_signature)
+        if not normalized:
+            compiled = _CompiledManufacturing6x4MixedCpSatData(
+                window_w=0,
+                window_h=0,
+                placements=tuple(),
+                cell_to_placement_indices={},
+            )
+            _LOCAL_POWER_CAPACITY_M6X4_MIXED_CPSAT_DATA_CACHE[cache_key] = compiled
+            return compiled
+
+        placements = tuple(
+            sorted(
+                {
+                    (
+                        int(x_val),
+                        int(y_val),
+                        int(width),
+                        int(height),
+                    )
+                    for x_val, y_val, width, height in normalized
+                }
+            )
+        )
+        window_w = max(int(x_val) + int(width) for x_val, _, width, _ in placements)
+        window_h = max(int(y_val) + int(height) for _, y_val, _, height in placements)
+        cell_to_indices: DefaultDict[Tuple[int, int], List[int]] = defaultdict(list)
+        for placement_idx, (x_val, y_val, width, height) in enumerate(placements):
+            for dx in range(int(width)):
+                for dy in range(int(height)):
+                    cell_to_indices[(int(x_val) + dx, int(y_val) + dy)].append(
+                        int(placement_idx)
+                    )
+        compiled = _CompiledManufacturing6x4MixedCpSatData(
+            window_w=int(window_w),
+            window_h=int(window_h),
+            placements=placements,
+            cell_to_placement_indices={
+                cell: tuple(indices) for cell, indices in cell_to_indices.items()
+            },
+        )
+        _LOCAL_POWER_CAPACITY_M6X4_MIXED_CPSAT_DATA_CACHE[cache_key] = compiled
+        return compiled
+
+    def _compile_rectangle_frontier_dp(
+        self,
+        tpl: str,
+        compact_signature: CompactLocalCapacitySignature,
+        *,
+        scan_axis: str,
+    ) -> _CompiledRectangleFrontierDP:
+        cache_key = (str(tpl), compact_signature, str(scan_axis))
+        cached = _LOCAL_POWER_CAPACITY_RECT_DP_COMPILED_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
+        normalized = self._normalize_rectangle_frontier_signature(str(tpl), compact_signature)
+        if not normalized:
+            compiled = _CompiledRectangleFrontierDP(
+                scan_axis=str(scan_axis),
+                line_count=0,
+                line_width=0,
+                frontier_bits=0,
+                horizon=0,
+                line_end_shift=0,
+                current_bit_masks=tuple(),
+                placements_by_line_and_pos=tuple(),
+                start_options_by_line_and_pos=tuple(),
+                line_subset_transitions_by_line=tuple(),
+                compiled_start_options=0,
+                deduped_start_options=0,
+                compiled_line_subsets=0,
+                peak_line_subset_options=0,
+            )
+            _LOCAL_POWER_CAPACITY_RECT_DP_COMPILED_CACHE[cache_key] = compiled
+            return compiled
+
+        placements = list(normalized)
+        window_w = max(int(x_val) + int(width) for x_val, _, width, _ in placements)
+        window_h = max(int(y_val) + int(height) for _, y_val, _, height in placements)
+        max_rect_w = max(int(width) for _, _, width, _ in placements)
+        max_rect_h = max(int(height) for _, _, _, height in placements)
+        if window_w <= 0 or window_h <= 0 or max_rect_w <= 0 or max_rect_h <= 0:
+            raise _RectangleFrontierDPFallback(
+                f"Invalid rectangle frontier domain for template {tpl}"
+            )
+
+        if scan_axis == "row":
+            line_count = int(window_h)
+            line_width = int(window_w)
+            max_span = int(max_rect_h)
+            frontier_bits = int(window_w) * max(0, int(max_rect_h) - 1)
+            encoded = [
+                (int(y_val), int(x_val), int(height), int(width))
+                for x_val, y_val, width, height in placements
+            ]
+        elif scan_axis == "column":
+            line_count = int(window_w)
+            line_width = int(window_h)
+            max_span = int(max_rect_w)
+            frontier_bits = int(window_h) * max(0, int(max_rect_w) - 1)
+            encoded = [
+                (int(x_val), int(y_val), int(width), int(height))
+                for x_val, y_val, width, height in placements
+            ]
+        else:
+            raise ValueError(f"Unsupported rectangle frontier scan_axis: {scan_axis}")
+
+        if line_count <= 0 or line_width <= 0 or max_span <= 0:
+            raise _RectangleFrontierDPFallback(
+                f"Invalid rectangle frontier geometry for template {tpl}"
+            )
+
+        horizon = max(0, int(max_span) - 1)
+        placements_by_line_and_pos: List[List[List[Tuple[int, int, Tuple[int, ...]]]]] = [
+            [[] for _ in range(int(line_width))]
+            for _ in range(int(line_count))
+        ]
+        start_options_by_line_and_pos: List[List[List[PackedRectTransition]]] = [
+            [[] for _ in range(int(line_width))]
+            for _ in range(int(line_count))
+        ]
+        line_level_options_by_line: List[List[PackedRectTransition]] = [
+            [] for _ in range(int(line_count))
+        ]
+        compiled_start_options = 0
+        for start_line, start_pos, span_lines, span_pos in encoded:
+            if (
+                int(start_line) < 0
+                or int(start_pos) < 0
+                or int(span_lines) <= 0
+                or int(span_pos) <= 0
+                or int(start_line) + int(span_lines) > int(line_count)
+                or int(start_pos) + int(span_pos) > int(line_width)
+            ):
+                raise _RectangleFrontierDPFallback(
+                    f"Out-of-bounds rectangle frontier placement for template {tpl}"
+                )
+            interval_mask = ((1 << int(span_pos)) - 1) << int(start_pos)
+            placements_by_line_and_pos[int(start_line)][int(start_pos)].append(
+                (
+                    int(span_lines),
+                    int(span_pos),
+                    tuple(int(interval_mask) for _ in range(int(span_lines))),
+                )
+            )
+            conflict_mask = 0
+            future_write_mask = 0
+            for line_offset in range(int(span_lines)):
+                placed_mask = int(interval_mask) << (int(line_offset) * int(line_width))
+                conflict_mask |= int(placed_mask)
+                if int(line_offset) == 0:
+                    future_write_mask |= int(interval_mask) & ~(
+                        (1 << (int(start_pos) + 1)) - 1
+                    )
+                else:
+                    future_write_mask |= int(placed_mask)
+            start_options_by_line_and_pos[int(start_line)][int(start_pos)].append(
+                (int(conflict_mask), int(future_write_mask), 1)
+            )
+            next_line_write_mask = 0
+            for line_offset in range(1, int(span_lines)):
+                next_line_write_mask |= int(interval_mask) << (
+                    (int(line_offset) - 1) * int(line_width)
+                )
+            line_level_options_by_line[int(start_line)].append(
+                (int(conflict_mask), int(next_line_write_mask), 1)
+            )
+            compiled_start_options += 1
+
+        deduped_start_options = 0
+        deduped_start_options_by_line_and_pos: List[List[Tuple[PackedRectTransition, ...]]] = []
+        for line_row in start_options_by_line_and_pos:
+            deduped_line: List[Tuple[PackedRectTransition, ...]] = []
+            for placements_at_pos in line_row:
+                deduped = tuple(
+                    sorted(
+                        set(placements_at_pos),
+                        key=lambda item: (
+                            int(item[0]),
+                            int(item[1]),
+                            int(item[2]),
+                        ),
+                    )
+                )
+                deduped_start_options += int(len(deduped))
+                deduped_line.append(deduped)
+            deduped_start_options_by_line_and_pos.append(deduped_line)
+
+        max_line_subsets = int(self._local_power_capacity_rect_dp_max_line_subsets)
+        compiled_line_subsets = 0
+        peak_line_subset_options = 0
+        line_subset_transitions_by_line: List[Tuple[PackedRectTransition, ...]] = []
+        for line_options in line_level_options_by_line:
+            unique_line_options = tuple(
+                sorted(
+                    set(line_options),
+                    key=lambda item: (
+                        int(item[0]),
+                        int(item[1]),
+                        int(item[2]),
+                    ),
+                )
+            )
+            subset_best: Dict[Tuple[int, int], int] = {}
+            subset_visits = 0
+
+            def enumerate_subsets(
+                option_idx: int,
+                combined_conflict: int,
+                combined_next_write: int,
+                gain: int,
+            ) -> None:
+                nonlocal subset_visits
+                subset_visits += 1
+                if subset_visits > max_line_subsets:
+                    raise _RectangleFrontierDPFallback(
+                        f"Rectangle frontier DP line-subset limit exceeded for template {tpl}"
+                    )
+                if gain > 0:
+                    subset_key = (int(combined_conflict), int(combined_next_write))
+                    previous_gain = subset_best.get(subset_key)
+                    if previous_gain is None or int(gain) > int(previous_gain):
+                        subset_best[subset_key] = int(gain)
+                for next_idx in range(int(option_idx), len(unique_line_options)):
+                    conflict_mask, next_write_mask, option_gain = unique_line_options[int(next_idx)]
+                    if int(combined_conflict) & int(conflict_mask):
+                        continue
+                    enumerate_subsets(
+                        int(next_idx) + 1,
+                        int(combined_conflict) | int(conflict_mask),
+                        int(combined_next_write) | int(next_write_mask),
+                        int(gain) + int(option_gain),
+                    )
+
+            enumerate_subsets(0, 0, 0, 0)
+            line_subset_transitions = tuple(
+                sorted(
+                    (
+                        (int(conflict_mask), int(next_write_mask), int(gain))
+                        for (conflict_mask, next_write_mask), gain in subset_best.items()
+                    ),
+                    key=lambda item: (
+                        int(item[0]),
+                        int(item[1]),
+                        int(item[2]),
+                    ),
+                )
+            )
+            compiled_line_subsets += int(len(line_subset_transitions))
+            peak_line_subset_options = max(
+                int(peak_line_subset_options),
+                int(len(line_subset_transitions)),
+            )
+            line_subset_transitions_by_line.append(line_subset_transitions)
+
+        compiled = _CompiledRectangleFrontierDP(
+            scan_axis=str(scan_axis),
+            line_count=int(line_count),
+            line_width=int(line_width),
+            frontier_bits=int(frontier_bits),
+            horizon=int(horizon),
+            line_end_shift=int(line_width),
+            current_bit_masks=tuple(1 << int(pos) for pos in range(int(line_width))),
+            placements_by_line_and_pos=tuple(
+                tuple(
+                    tuple(
+                        sorted(
+                            placements_at_pos,
+                            key=lambda item: (
+                                int(item[0]),
+                                int(item[1]),
+                                tuple(int(mask) for mask in item[2]),
+                            ),
+                        )
+                    )
+                    for placements_at_pos in line_row
+                )
+                for line_row in placements_by_line_and_pos
+            ),
+            start_options_by_line_and_pos=tuple(
+                tuple(line_row) for line_row in deduped_start_options_by_line_and_pos
+            ),
+            line_subset_transitions_by_line=tuple(line_subset_transitions_by_line),
+            compiled_start_options=int(compiled_start_options),
+            deduped_start_options=int(deduped_start_options),
+            compiled_line_subsets=int(compiled_line_subsets),
+            peak_line_subset_options=int(peak_line_subset_options),
+        )
+        _LOCAL_POWER_CAPACITY_RECT_DP_COMPILED_CACHE[cache_key] = compiled
+        return compiled
+
+    def _solve_exact_local_power_capacity_rectangle_frontier_dp_v1(
+        self,
+        tpl: str,
+        compact_signature: CompactLocalCapacitySignature,
+        *,
+        scan_axis: Optional[str] = None,
+    ) -> int:
+        normalized = self._normalize_rectangle_frontier_signature(str(tpl), compact_signature)
+        if not normalized:
+            return 0
+        if len(normalized) <= 1:
+            return int(len(normalized))
+
+        placements = list(normalized)
+        window_w = max(int(x_val) + int(width) for x_val, _, width, _ in placements)
+        window_h = max(int(y_val) + int(height) for _, y_val, _, height in placements)
+        max_rect_w = max(int(width) for _, _, width, _ in placements)
+        max_rect_h = max(int(height) for _, _, _, height in placements)
+        if window_w <= 0 or window_h <= 0 or max_rect_w <= 0 or max_rect_h <= 0:
+            raise _RectangleFrontierDPFallback(
+                f"Invalid rectangle frontier domain for template {tpl}"
+            )
+
+        row_frontier_bits = int(window_w) * max(0, int(max_rect_h) - 1)
+        col_frontier_bits = int(window_h) * max(0, int(max_rect_w) - 1)
+        if scan_axis is None:
+            scan_axis = "row" if row_frontier_bits <= col_frontier_bits else "column"
+        if scan_axis not in {"row", "column"}:
+            raise ValueError(f"Unsupported rectangle frontier scan_axis: {scan_axis}")
+
+        if scan_axis == "row":
+            line_count = int(window_h)
+            line_width = int(window_w)
+            encoded = [
+                (int(y_val), int(x_val), int(height), int(width))
+                for x_val, y_val, width, height in placements
+            ]
+        else:
+            line_count = int(window_w)
+            line_width = int(window_h)
+            encoded = [
+                (int(x_val), int(y_val), int(width), int(height))
+                for x_val, y_val, width, height in placements
+            ]
+
+        max_span = max(int(span_lines) for _, _, span_lines, _ in encoded)
+        if line_count <= 0 or line_width <= 0 or max_span <= 0:
+            raise _RectangleFrontierDPFallback(
+                f"Invalid rectangle frontier geometry for template {tpl}"
+            )
+
+        placements_by_line: Dict[int, Dict[int, List[Tuple[int, int, Tuple[int, ...]]]]] = {}
+        for start_line, start_pos, span_lines, span_pos in encoded:
+            if (
+                int(start_line) < 0
+                or int(start_pos) < 0
+                or int(span_lines) <= 0
+                or int(span_pos) <= 0
+                or int(start_line) + int(span_lines) > int(line_count)
+                or int(start_pos) + int(span_pos) > int(line_width)
+            ):
+                raise _RectangleFrontierDPFallback(
+                    f"Out-of-bounds rectangle frontier placement for template {tpl}"
+                )
+            interval_mask = ((1 << int(span_pos)) - 1) << int(start_pos)
+            placements_by_line.setdefault(int(start_line), {}).setdefault(int(start_pos), []).append(
+                (
+                    int(span_lines),
+                    int(span_pos),
+                    tuple(int(interval_mask) for _ in range(int(span_lines))),
+                )
+            )
+
+        max_states = int(self._local_power_capacity_rect_dp_max_states)
+        state_visits = 0
+        line_cache: Dict[Tuple[int, int], int] = {}
+
+        def solve_line(line_idx: int, packed_state: int) -> int:
+            nonlocal state_visits
+            if line_idx >= line_count:
+                return 0 if packed_state == 0 else -10**9
+            cache_key = (int(line_idx), int(packed_state))
+            cached = line_cache.get(cache_key)
+            if cached is not None:
+                return int(cached)
+            state_visits += 1
+            if state_visits > max_states:
+                raise _RectangleFrontierDPFallback(
+                    f"Rectangle frontier DP state limit exceeded for template {tpl}"
+                )
+
+            placements_by_pos = placements_by_line.get(int(line_idx), {})
+            pos_cache: Dict[Tuple[int, int], int] = {}
+
+            def solve_pos(pos: int, working_state: int) -> int:
+                nonlocal state_visits
+                while pos < line_width and ((int(working_state) >> int(pos)) & 1):
+                    pos += 1
+                if pos >= line_width:
+                    return solve_line(int(line_idx) + 1, int(working_state) >> int(line_width))
+                pos_key = (int(pos), int(working_state))
+                cached_pos = pos_cache.get(pos_key)
+                if cached_pos is not None:
+                    return int(cached_pos)
+                state_visits += 1
+                if state_visits > max_states:
+                    raise _RectangleFrontierDPFallback(
+                        f"Rectangle frontier DP state limit exceeded for template {tpl}"
+                    )
+
+                best = int(solve_pos(int(pos) + 1, int(working_state)))
+                for span_lines, span_pos, line_masks in placements_by_pos.get(int(pos), []):
+                    conflict = False
+                    for line_offset, line_mask in enumerate(line_masks):
+                        if (int(working_state) >> (int(line_offset) * int(line_width))) & int(line_mask):
+                            conflict = True
+                            break
+                    if conflict:
+                        continue
+                    next_state = int(working_state)
+                    for line_offset, line_mask in enumerate(line_masks):
+                        next_state |= int(line_mask) << (int(line_offset) * int(line_width))
+                    best = max(
+                        int(best),
+                        1 + int(solve_pos(int(pos) + int(span_pos), int(next_state))),
+                    )
+                pos_cache[pos_key] = int(best)
+                return int(best)
+
+            result = int(solve_pos(0, int(packed_state)))
+            line_cache[cache_key] = int(result)
+            return int(result)
+
+        return int(solve_line(0, 0))
+
+    def _solve_exact_local_power_capacity_rectangle_frontier_dp_v2(
+        self,
+        tpl: str,
+        compact_signature: CompactLocalCapacitySignature,
+        *,
+        scan_axis: Optional[str] = None,
+        cache_stats: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        normalized = self._normalize_rectangle_frontier_signature(str(tpl), compact_signature)
+        if not normalized:
+            return 0
+        if len(normalized) <= 1:
+            return int(len(normalized))
+
+        row_frontier_bits, col_frontier_bits = self._rectangle_frontier_scan_stats(normalized)
+        if scan_axis is None:
+            scan_axis = "row" if row_frontier_bits <= col_frontier_bits else "column"
+        if scan_axis not in {"row", "column"}:
+            raise ValueError(f"Unsupported rectangle frontier scan_axis: {scan_axis}")
+
+        compiled = self._compile_rectangle_frontier_dp(
+            str(tpl),
+            compact_signature,
+            scan_axis=str(scan_axis),
+        )
+        if compiled.line_count <= 0 or compiled.line_width <= 0:
+            return 0
+
+        max_states = int(self._local_power_capacity_rect_dp_max_states)
+        line_states: Dict[int, int] = {0: 0}
+        state_counter = 1
+        state_merges = 0
+        peak_line_states = 1
+        peak_pos_states = 0
+
+        def merge_state(
+            state_map: Dict[int, int],
+            packed_state: int,
+            best_count: int,
+        ) -> None:
+            nonlocal state_counter, state_merges
+            existing = state_map.get(int(packed_state))
+            if existing is None:
+                state_map[int(packed_state)] = int(best_count)
+                state_counter += 1
+                if state_counter > max_states:
+                    raise _RectangleFrontierDPFallback(
+                        f"Rectangle frontier DP state limit exceeded for template {tpl}"
+                    )
+                return
+            state_merges += 1
+            if int(best_count) > int(existing):
+                state_map[int(packed_state)] = int(best_count)
+
+        line_width = int(compiled.line_width)
+        for line_idx in range(int(compiled.line_count)):
+            placements_by_pos = compiled.placements_by_line_and_pos[int(line_idx)]
+            pos_states = dict(line_states)
+            peak_pos_states = max(int(peak_pos_states), int(len(pos_states)))
+            for pos in range(int(line_width)):
+                next_pos_states: Dict[int, int] = {}
+                bit_mask = 1 << int(pos)
+                for packed_state, current_count in pos_states.items():
+                    if int(packed_state) & int(bit_mask):
+                        merge_state(next_pos_states, int(packed_state), int(current_count))
+                        continue
+                    merge_state(next_pos_states, int(packed_state), int(current_count))
+                    for span_lines, span_pos, line_masks in placements_by_pos[int(pos)]:
+                        conflict = False
+                        for line_offset, line_mask in enumerate(line_masks):
+                            chunk_bits = int(packed_state) >> (int(line_offset) * int(line_width))
+                            if int(chunk_bits) & int(line_mask):
+                                conflict = True
+                                break
+                        if conflict:
+                            continue
+                        next_state = int(packed_state)
+                        for line_offset, line_mask in enumerate(line_masks):
+                            next_state |= int(line_mask) << (int(line_offset) * int(line_width))
+                        merge_state(
+                            next_pos_states,
+                            int(next_state),
+                            int(current_count) + 1,
+                        )
+                pos_states = next_pos_states
+                peak_pos_states = max(int(peak_pos_states), int(len(pos_states)))
+            line_states = {}
+            for packed_state, current_count in pos_states.items():
+                merge_state(line_states, int(packed_state) >> int(line_width), int(current_count))
+            peak_line_states = max(int(peak_line_states), int(len(line_states)))
+
+        result = int(line_states.get(0, -10**9))
+        if result < 0:
+            raise _RectangleFrontierDPFallback(
+                f"Rectangle frontier DP terminated with residual frontier for template {tpl}"
+            )
+
+        if cache_stats is not None:
+            cache_stats["rect_dp_state_merges"] = int(
+                cache_stats.get("rect_dp_state_merges", 0)
+            ) + int(state_merges)
+            cache_stats["rect_dp_peak_line_states"] = max(
+                int(cache_stats.get("rect_dp_peak_line_states", 0)),
+                int(peak_line_states),
+            )
+            cache_stats["rect_dp_peak_pos_states"] = max(
+                int(cache_stats.get("rect_dp_peak_pos_states", 0)),
+                int(peak_pos_states),
+            )
+            cache_stats["rect_dp_compiled_signatures"] = int(
+                len(_LOCAL_POWER_CAPACITY_RECT_DP_COMPILED_CACHE)
+            )
+        return int(result)
+
+    def _solve_exact_local_power_capacity_rectangle_frontier_dp_v3(
+        self,
+        tpl: str,
+        compact_signature: CompactLocalCapacitySignature,
+        *,
+        scan_axis: Optional[str] = None,
+        compiled: Optional[_CompiledRectangleFrontierDP] = None,
+        cache_stats: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        normalized = self._normalize_rectangle_frontier_signature(str(tpl), compact_signature)
+        if not normalized:
+            return 0
+        if len(normalized) <= 1:
+            return int(len(normalized))
+
+        row_frontier_bits, col_frontier_bits = self._rectangle_frontier_scan_stats(normalized)
+        if scan_axis is None:
+            scan_axis = "row" if row_frontier_bits <= col_frontier_bits else "column"
+        if scan_axis not in {"row", "column"}:
+            raise ValueError(f"Unsupported rectangle frontier scan_axis: {scan_axis}")
+
+        if compiled is None:
+            compiled = self._compile_rectangle_frontier_dp(
+                str(tpl),
+                compact_signature,
+                scan_axis=str(scan_axis),
+            )
+        if compiled.line_count <= 0 or compiled.line_width <= 0:
+            return 0
+
+        max_states = int(self._local_power_capacity_rect_dp_max_states)
+        line_states: Dict[int, int] = {0: 0}
+        state_counter = 1
+        state_merges = 0
+        peak_line_states = 1
+        peak_pos_states = 1
+
+        current_bit_masks = compiled.current_bit_masks
+        line_end_shift = int(compiled.line_end_shift)
+        for line_idx in range(int(compiled.line_count)):
+            pos_states = line_states
+            placements_by_pos = compiled.start_options_by_line_and_pos[int(line_idx)]
+            peak_pos_states = max(int(peak_pos_states), int(len(pos_states)))
+            for pos in range(int(compiled.line_width)):
+                next_pos_states: Dict[int, int] = {}
+                current_bit_mask = int(current_bit_masks[int(pos)])
+                start_options = placements_by_pos[int(pos)]
+                for packed_state, current_count in pos_states.items():
+                    advance_state = int(packed_state) & ~int(current_bit_mask)
+                    existing_advance = next_pos_states.get(int(advance_state))
+                    if existing_advance is None:
+                        next_pos_states[int(advance_state)] = int(current_count)
+                        state_counter += 1
+                        if state_counter > max_states:
+                            raise _RectangleFrontierDPFallback(
+                                f"Rectangle frontier DP state limit exceeded for template {tpl}"
+                            )
+                    else:
+                        state_merges += 1
+                        if int(current_count) > int(existing_advance):
+                            next_pos_states[int(advance_state)] = int(current_count)
+
+                    if int(packed_state) & int(current_bit_mask):
+                        continue
+                    for conflict_mask, future_write_mask, gain in start_options:
+                        if int(packed_state) & int(conflict_mask):
+                            continue
+                        next_state = int(packed_state) | int(future_write_mask)
+                        next_count = int(current_count) + int(gain)
+                        existing_next = next_pos_states.get(int(next_state))
+                        if existing_next is None:
+                            next_pos_states[int(next_state)] = int(next_count)
+                            state_counter += 1
+                            if state_counter > max_states:
+                                raise _RectangleFrontierDPFallback(
+                                    f"Rectangle frontier DP state limit exceeded for template {tpl}"
+                                )
+                        else:
+                            state_merges += 1
+                            if int(next_count) > int(existing_next):
+                                next_pos_states[int(next_state)] = int(next_count)
+                pos_states = next_pos_states
+                peak_pos_states = max(int(peak_pos_states), int(len(pos_states)))
+
+            line_states = {}
+            for packed_state, current_count in pos_states.items():
+                shifted_state = int(packed_state) >> int(line_end_shift)
+                existing_shifted = line_states.get(int(shifted_state))
+                if existing_shifted is None:
+                    line_states[int(shifted_state)] = int(current_count)
+                    state_counter += 1
+                    if state_counter > max_states:
+                        raise _RectangleFrontierDPFallback(
+                            f"Rectangle frontier DP state limit exceeded for template {tpl}"
+                        )
+                else:
+                    state_merges += 1
+                    if int(current_count) > int(existing_shifted):
+                        line_states[int(shifted_state)] = int(current_count)
+            peak_line_states = max(int(peak_line_states), int(len(line_states)))
+
+        result = int(line_states.get(0, -10**9))
+        if result < 0:
+            raise _RectangleFrontierDPFallback(
+                f"Rectangle frontier DP terminated with residual frontier for template {tpl}"
+            )
+
+        if cache_stats is not None:
+            cache_stats["rect_dp_state_merges"] = int(
+                cache_stats.get("rect_dp_state_merges", 0)
+            ) + int(state_merges)
+            cache_stats["rect_dp_peak_line_states"] = max(
+                int(cache_stats.get("rect_dp_peak_line_states", 0)),
+                int(peak_line_states),
+            )
+            cache_stats["rect_dp_peak_pos_states"] = max(
+                int(cache_stats.get("rect_dp_peak_pos_states", 0)),
+                int(peak_pos_states),
+            )
+            cache_stats["rect_dp_compiled_signatures"] = int(
+                len(_LOCAL_POWER_CAPACITY_RECT_DP_COMPILED_CACHE)
+            )
+            cache_stats["rect_dp_compiled_start_options"] = int(
+                sum(
+                    int(item.compiled_start_options)
+                    for item in _LOCAL_POWER_CAPACITY_RECT_DP_COMPILED_CACHE.values()
+                )
+            )
+            cache_stats["rect_dp_deduped_start_options"] = int(
+                sum(
+                    int(item.deduped_start_options)
+                    for item in _LOCAL_POWER_CAPACITY_RECT_DP_COMPILED_CACHE.values()
+                )
+            )
+        return int(result)
+
+    def _solve_exact_local_power_capacity_rectangle_frontier_dp_v4(
+        self,
+        tpl: str,
+        compact_signature: CompactLocalCapacitySignature,
+        *,
+        scan_axis: Optional[str] = None,
+        compiled: Optional[_CompiledRectangleFrontierDP] = None,
+        cache_stats: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        normalized = self._normalize_rectangle_frontier_signature(str(tpl), compact_signature)
+        if not normalized:
+            return 0
+        if len(normalized) <= 1:
+            return int(len(normalized))
+
+        row_frontier_bits, col_frontier_bits = self._rectangle_frontier_scan_stats(normalized)
+        if scan_axis is None:
+            scan_axis = "row" if row_frontier_bits <= col_frontier_bits else "column"
+        if scan_axis not in {"row", "column"}:
+            raise ValueError(f"Unsupported rectangle frontier scan_axis: {scan_axis}")
+
+        if compiled is None:
+            compiled = self._compile_rectangle_frontier_dp(
+                str(tpl),
+                compact_signature,
+                scan_axis=str(scan_axis),
+            )
+        if compiled.line_count <= 0 or compiled.line_width <= 0:
+            return 0
+
+        max_states = int(self._local_power_capacity_rect_dp_max_states)
+        line_states: Dict[int, int] = {0: 0}
+        state_counter = 1
+        state_merges = 0
+        peak_line_states = 1
+        peak_pos_states = 1
+        peak_line_subset_options = 0
+
+        def merge_state(
+            state_map: Dict[int, int],
+            packed_state: int,
+            best_count: int,
+        ) -> None:
+            nonlocal state_counter, state_merges
+            existing = state_map.get(int(packed_state))
+            if existing is None:
+                state_map[int(packed_state)] = int(best_count)
+                state_counter += 1
+                if state_counter > max_states:
+                    raise _RectangleFrontierDPFallback(
+                        f"Rectangle frontier DP state limit exceeded for template {tpl}"
+                    )
+                return
+            state_merges += 1
+            if int(best_count) > int(existing):
+                state_map[int(packed_state)] = int(best_count)
+
+        line_end_shift = int(compiled.line_end_shift)
+        for line_transitions in compiled.line_subset_transitions_by_line:
+            peak_pos_states = max(int(peak_pos_states), int(len(line_states)))
+            peak_line_subset_options = max(
+                int(peak_line_subset_options),
+                int(len(line_transitions)),
+            )
+            next_line_states: Dict[int, int] = {}
+            for packed_state, current_count in line_states.items():
+                shifted_state = int(packed_state) >> int(line_end_shift)
+                merge_state(next_line_states, int(shifted_state), int(current_count))
+                for conflict_mask, next_write_mask, gain in line_transitions:
+                    if int(packed_state) & int(conflict_mask):
+                        continue
+                    merge_state(
+                        next_line_states,
+                        int(shifted_state) | int(next_write_mask),
+                        int(current_count) + int(gain),
+                    )
+            line_states = next_line_states
+            peak_line_states = max(int(peak_line_states), int(len(line_states)))
+
+        result = int(line_states.get(0, -10**9))
+        if result < 0:
+            raise _RectangleFrontierDPFallback(
+                f"Rectangle frontier DP terminated with residual frontier for template {tpl}"
+            )
+
+        if cache_stats is not None:
+            cache_stats["rect_dp_state_merges"] = int(
+                cache_stats.get("rect_dp_state_merges", 0)
+            ) + int(state_merges)
+            cache_stats["rect_dp_peak_line_states"] = max(
+                int(cache_stats.get("rect_dp_peak_line_states", 0)),
+                int(peak_line_states),
+            )
+            cache_stats["rect_dp_peak_pos_states"] = max(
+                int(cache_stats.get("rect_dp_peak_pos_states", 0)),
+                int(peak_pos_states),
+            )
+            cache_stats["rect_dp_peak_line_subset_options"] = max(
+                int(cache_stats.get("rect_dp_peak_line_subset_options", 0)),
+                int(peak_line_subset_options),
+            )
+            cache_stats["rect_dp_compiled_signatures"] = int(
+                len(_LOCAL_POWER_CAPACITY_RECT_DP_COMPILED_CACHE)
+            )
+            cache_stats["rect_dp_compiled_start_options"] = int(
+                sum(
+                    int(item.compiled_start_options)
+                    for item in _LOCAL_POWER_CAPACITY_RECT_DP_COMPILED_CACHE.values()
+                )
+            )
+            cache_stats["rect_dp_deduped_start_options"] = int(
+                sum(
+                    int(item.deduped_start_options)
+                    for item in _LOCAL_POWER_CAPACITY_RECT_DP_COMPILED_CACHE.values()
+                )
+            )
+            cache_stats["rect_dp_compiled_line_subsets"] = int(
+                sum(
+                    int(item.compiled_line_subsets)
+                    for item in _LOCAL_POWER_CAPACITY_RECT_DP_COMPILED_CACHE.values()
+                )
+            )
+        return int(result)
+
+    def _solve_exact_local_power_capacity_manufacturing_6x4_mixed_cpsat(
+        self,
+        tpl: str,
+        compact_signature: CompactLocalCapacitySignature,
+        *,
+        cache_stats: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        if cache_stats is not None:
+            cache_stats["m6x4_mixed_cpsat_evaluations"] = int(
+                cache_stats.get("m6x4_mixed_cpsat_evaluations", 0)
+            ) + 1
+            cache_key = (str(tpl), compact_signature)
+            if cache_key in _LOCAL_POWER_CAPACITY_M6X4_MIXED_CPSAT_DATA_CACHE:
+                cache_stats["m6x4_mixed_cpsat_cache_hits"] = int(
+                    cache_stats.get("m6x4_mixed_cpsat_cache_hits", 0)
+                ) + 1
+
+        if not self._is_manufacturing_6x4_mixed_signature(str(tpl), compact_signature):
+            raise _Manufacturing6x4MixedCpSatFallback(
+                f"Template-specialized manufacturing_6x4 mixed CP-SAT is unsupported for {tpl}"
+            )
+
+        compiled = self._compile_manufacturing_6x4_mixed_cpsat_data(
+            str(tpl),
+            compact_signature,
+        )
+        if not compiled.placements:
+            return 0
+
+        local_model = cp_model.CpModel()
+        local_vars = [
+            local_model.NewBoolVar(f"m6x4_mixed_cap__{tpl}__{idx}")
+            for idx in range(len(compiled.placements))
+        ]
+        for terms in compiled.cell_to_placement_indices.values():
+            if len(terms) > 1:
+                local_model.Add(sum(local_vars[idx] for idx in terms) <= 1)
+        local_model.Maximize(sum(local_vars))
+
+        solver = cp_model.CpSolver()
+        solver.parameters.num_search_workers = 8
+        status = solver.Solve(local_model)
+        if status != cp_model.OPTIMAL:
+            raise _Manufacturing6x4MixedCpSatFallback(
+                "manufacturing_6x4 mixed CP-SAT did not prove optimal: "
+                f"{solver.StatusName(status)}"
+            )
+        return int(round(solver.ObjectiveValue()))
+
+    def _solve_exact_local_power_capacity_rectangle_frontier_dp(
+        self,
+        tpl: str,
+        compact_signature: CompactLocalCapacitySignature,
+        *,
+        scan_axis: Optional[str] = None,
+        cache_stats: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        normalized = self._normalize_rectangle_frontier_signature(str(tpl), compact_signature)
+        if not normalized:
+            return 0
+        if len(normalized) <= 1:
+            return int(len(normalized))
+
+        row_frontier_bits, col_frontier_bits = self._rectangle_frontier_scan_stats(normalized)
+        if scan_axis is None:
+            scan_axis = "row" if row_frontier_bits <= col_frontier_bits else "column"
+        if scan_axis not in {"row", "column"}:
+            raise ValueError(f"Unsupported rectangle frontier scan_axis: {scan_axis}")
+
+        compiled = self._compile_rectangle_frontier_dp(
+            str(tpl),
+            compact_signature,
+            scan_axis=str(scan_axis),
+        )
+        if self._should_use_rectangle_frontier_dp_v4(compiled):
+            return self._solve_exact_local_power_capacity_rectangle_frontier_dp_v4(
+                str(tpl),
+                compact_signature,
+                scan_axis=scan_axis,
+                compiled=compiled,
+                cache_stats=cache_stats,
+            )
+        if self._is_manufacturing_6x4_mixed_signature(str(tpl), compact_signature):
+            if cache_stats is not None:
+                cache_stats["m6x4_mixed_cpsat_selected_cases"] = int(
+                    cache_stats.get("m6x4_mixed_cpsat_selected_cases", 0)
+                ) + 1
+            try:
+                return self._solve_exact_local_power_capacity_manufacturing_6x4_mixed_cpsat(
+                    str(tpl),
+                    compact_signature,
+                    cache_stats=cache_stats,
+                )
+            except _Manufacturing6x4MixedCpSatFallback:
+                if cache_stats is not None:
+                    cache_stats["m6x4_mixed_cpsat_v3_fallbacks"] = int(
+                        cache_stats.get("m6x4_mixed_cpsat_v3_fallbacks", 0)
+                    ) + 1
+        if cache_stats is not None:
+            cache_stats["rect_dp_v3_fallbacks"] = int(
+                cache_stats.get("rect_dp_v3_fallbacks", 0)
+            ) + 1
+        return self._solve_exact_local_power_capacity_rectangle_frontier_dp_v3(
+            str(tpl),
+            compact_signature,
+            scan_axis=scan_axis,
+            compiled=compiled,
+            cache_stats=cache_stats,
+        )
+
+    def _solve_exact_local_power_capacity(
+        self,
+        tpl: str,
+        signature: LocalCapacitySignature,
+        *,
+        compact_signature: Optional[CompactLocalCapacitySignature] = None,
+        cache_stats: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        if not signature:
+            return 0
+
+        legacy_key = (str(tpl), signature)
+        cached = _LOCAL_POWER_CAPACITY_CACHE.get(legacy_key)
+        if cached is not None:
+            return int(cached)
+
+        capacity: Optional[int] = None
+        compact_key: Optional[Tuple[str, CompactLocalCapacitySignature]] = None
+        if compact_signature is not None:
+            compact_key = (str(tpl), compact_signature)
+            rect_cached = _LOCAL_POWER_CAPACITY_RECT_DP_CACHE.get(compact_key)
+            if rect_cached is not None:
+                if cache_stats is not None:
+                    cache_stats["rect_dp_cache_hits"] = int(
+                        cache_stats.get("rect_dp_cache_hits", 0)
+                    ) + 1
+                _LOCAL_POWER_CAPACITY_CACHE[legacy_key] = int(rect_cached)
+                return int(rect_cached)
+            if cache_stats is not None:
+                cache_stats["rect_dp_cache_misses"] = int(
+                    cache_stats.get("rect_dp_cache_misses", 0)
+                ) + 1
+                cache_stats["rect_dp_evaluations"] = int(
+                    cache_stats.get("rect_dp_evaluations", 0)
+                ) + 1
+            try:
+                capacity = self._solve_exact_local_power_capacity_rectangle_frontier_dp(
+                    str(tpl),
+                    compact_signature,
+                    cache_stats=cache_stats,
+                )
+                _LOCAL_POWER_CAPACITY_RECT_DP_CACHE[compact_key] = int(capacity)
+            except _RectangleFrontierDPFallback:
+                if cache_stats is not None:
+                    cache_stats["bitset_fallbacks"] = int(
+                        cache_stats.get("bitset_fallbacks", 0)
+                    ) + 1
+
+        if capacity is None:
+            if cache_stats is not None:
+                cache_stats["bitset_oracle_evaluations"] = int(
+                    cache_stats.get("bitset_oracle_evaluations", 0)
+                ) + 1
+            try:
+                capacity = self._solve_exact_local_power_capacity_bitset_mis(str(tpl), signature)
+            except _BitsetLocalCapacityFallback:
+                if cache_stats is not None:
+                    cache_stats["cpsat_fallbacks"] = int(
+                        cache_stats.get("cpsat_fallbacks", 0)
+                    ) + 1
+                capacity = self._solve_exact_local_power_capacity_cpsat(str(tpl), signature)
+
+        if capacity is None:
+            if cache_stats is not None:
+                cache_stats["cpsat_fallbacks"] = int(
+                    cache_stats.get("cpsat_fallbacks", 0)
+                ) + 1
+            capacity = self._solve_exact_local_power_capacity_cpsat(str(tpl), signature)
+
+        _LOCAL_POWER_CAPACITY_CACHE[legacy_key] = int(capacity)
+        return int(capacity)
+
+    def _exact_local_power_capacity_coefficients(
+        self,
+        powered_template_demands: Mapping[str, int],
+        cache_stats: Dict[str, Any],
+    ) -> Dict[str, Dict[int, int]]:
+        coeff_by_template_and_pole: Dict[str, Dict[int, int]] = {}
+        shell_pair_items = sorted(self._power_pole_pose_indices_by_shell_pair.items())
+        template_order = sorted(str(tpl) for tpl in powered_template_demands)
+
+        cache_stats.setdefault("raw_pole_evaluations", 0)
+        cache_stats.setdefault("coefficient_source", "exact_rect_dp_cache_v7")
+        cache_stats.setdefault("shell_pair_count", len(shell_pair_items))
+        cache_stats.setdefault("signature_class_count", 0)
+        cache_stats.setdefault("signature_class_evaluations", 0)
+        cache_stats.setdefault("compact_signature_class_count", 0)
+        cache_stats.setdefault("compact_signature_class_evaluations", 0)
+        cache_stats.setdefault("compact_signature_hits", 0)
+        cache_stats.setdefault("compact_signature_misses", 0)
+        cache_stats.setdefault("rect_dp_evaluations", 0)
+        cache_stats.setdefault("rect_dp_cache_hits", 0)
+        cache_stats.setdefault("rect_dp_cache_misses", 0)
+        cache_stats.setdefault("rect_dp_state_merges", 0)
+        cache_stats.setdefault("rect_dp_peak_line_states", 0)
+        cache_stats.setdefault("rect_dp_peak_pos_states", 0)
+        cache_stats.setdefault("rect_dp_compiled_signatures", 0)
+        cache_stats.setdefault("rect_dp_compiled_start_options", 0)
+        cache_stats.setdefault("rect_dp_deduped_start_options", 0)
+        cache_stats.setdefault("rect_dp_compiled_line_subsets", 0)
+        cache_stats.setdefault("rect_dp_peak_line_subset_options", 0)
+        cache_stats.setdefault("rect_dp_v3_fallbacks", 0)
+        cache_stats.setdefault("m6x4_mixed_cpsat_evaluations", 0)
+        cache_stats.setdefault("m6x4_mixed_cpsat_cache_hits", 0)
+        cache_stats.setdefault("m6x4_mixed_cpsat_selected_cases", 0)
+        cache_stats.setdefault("m6x4_mixed_cpsat_v3_fallbacks", 0)
+        cache_stats.setdefault("bitset_oracle_evaluations", 0)
+        cache_stats.setdefault("bitset_fallbacks", 0)
+        cache_stats.setdefault("cpsat_fallbacks", 0)
+        cache_stats.setdefault("oracle", "rectangle_frontier_dp_v4")
+        shell_pair_evaluations = 0
+        for tpl in template_order:
+            coeff_by_template_and_pole[str(tpl)] = {}
+            signature_classes = self._build_local_power_capacity_signature_classes(str(tpl))
+            compact_signature_classes = (
+                self._power_pole_pose_indices_by_template_compact_capacity_signature.get(
+                    str(tpl),
+                    {},
+                )
+            )
+            legacy_by_compact = (
+                self._legacy_local_power_capacity_signature_by_template_compact_signature.get(
+                    str(tpl),
+                    {},
+                )
+            )
+            cache_stats["signature_class_count"] += int(len(signature_classes))
+            cache_stats["compact_signature_class_count"] += int(len(compact_signature_classes))
+            for _shell_pair, pose_indices in shell_pair_items:
+                shell_pair_signatures = {
+                    self._local_power_capacity_signature(str(tpl), int(pole_idx))
+                    for pole_idx in pose_indices
+                }
+                shell_pair_evaluations += int(len(shell_pair_signatures))
+                cache_stats["raw_pole_evaluations"] += int(len(pose_indices))
+            for compact_signature, grouped_pose_indices in sorted(compact_signature_classes.items()):
+                cache_stats["pole_template_evaluations"] += 1
+                legacy_signature = legacy_by_compact.get(compact_signature)
+                if legacy_signature is None:
+                    raise RuntimeError(
+                        f"Missing legacy local-capacity signature for compact signature in template {tpl}"
+                    )
+                cache_key = (str(tpl), compact_signature)
+                coeff = _LOCAL_POWER_CAPACITY_COMPACT_CACHE.get(cache_key)
+                if coeff is None:
+                    cache_stats["signature_misses"] += 1
+                    cache_stats["signature_class_evaluations"] += 1
+                    cache_stats["compact_signature_misses"] += 1
+                    cache_stats["compact_signature_class_evaluations"] += 1
+                    coeff = self._solve_exact_local_power_capacity(
+                        str(tpl),
+                        legacy_signature,
+                        compact_signature=compact_signature,
+                        cache_stats=cache_stats,
+                    )
+                    _LOCAL_POWER_CAPACITY_COMPACT_CACHE[cache_key] = int(coeff)
+                else:
+                    cache_stats["signature_hits"] += 1
+                    cache_stats["compact_signature_hits"] += 1
+                    _LOCAL_POWER_CAPACITY_CACHE.setdefault(
+                        (str(tpl), legacy_signature),
+                        int(coeff),
+                    )
+                for pole_idx in grouped_pose_indices:
+                    coeff_by_template_and_pole[str(tpl)][int(pole_idx)] = int(coeff)
+
+        cache_stats["signature_count"] = int(len(_LOCAL_POWER_CAPACITY_COMPACT_CACHE))
+        cache_stats["rect_dp_compiled_signatures"] = int(
+            len(_LOCAL_POWER_CAPACITY_RECT_DP_COMPILED_CACHE)
+        )
+        cache_stats["rect_dp_compiled_start_options"] = int(
+            sum(
+                int(item.compiled_start_options)
+                for item in _LOCAL_POWER_CAPACITY_RECT_DP_COMPILED_CACHE.values()
+            )
+        )
+        cache_stats["rect_dp_deduped_start_options"] = int(
+            sum(
+                int(item.deduped_start_options)
+                for item in _LOCAL_POWER_CAPACITY_RECT_DP_COMPILED_CACHE.values()
+            )
+        )
+        cache_stats["rect_dp_compiled_line_subsets"] = int(
+            sum(
+                int(item.compiled_line_subsets)
+                for item in _LOCAL_POWER_CAPACITY_RECT_DP_COMPILED_CACHE.values()
+            )
+        )
+        cache_stats["rect_dp_peak_line_subset_options"] = int(
+            max(
+                [0]
+                + [
+                    int(item.peak_line_subset_options)
+                    for item in _LOCAL_POWER_CAPACITY_RECT_DP_COMPILED_CACHE.values()
+                ]
+            )
+        )
+        self._update_exact_precompute_profile(
+            power_capacity_shell_pairs=int(len(shell_pair_items)),
+            power_capacity_shell_pair_evaluations=int(shell_pair_evaluations),
+            power_capacity_signature_classes=int(cache_stats["signature_class_count"]),
+            power_capacity_signature_class_evaluations=int(
+                cache_stats["signature_class_evaluations"]
+            ),
+            power_capacity_compact_signature_classes=int(
+                cache_stats["compact_signature_class_count"]
+            ),
+            power_capacity_compact_signature_evaluations=int(
+                cache_stats["compact_signature_class_evaluations"]
+            ),
+            power_capacity_compact_signature_cache_hits=int(
+                cache_stats["compact_signature_hits"]
+            ),
+            power_capacity_compact_signature_cache_misses=int(
+                cache_stats["compact_signature_misses"]
+            ),
+            power_capacity_rect_dp_evaluations=int(cache_stats["rect_dp_evaluations"]),
+            power_capacity_rect_dp_cache_hits=int(cache_stats["rect_dp_cache_hits"]),
+            power_capacity_rect_dp_cache_misses=int(cache_stats["rect_dp_cache_misses"]),
+            power_capacity_rect_dp_state_merges=int(cache_stats["rect_dp_state_merges"]),
+            power_capacity_rect_dp_peak_line_states=int(
+                cache_stats["rect_dp_peak_line_states"]
+            ),
+            power_capacity_rect_dp_peak_pos_states=int(
+                cache_stats["rect_dp_peak_pos_states"]
+            ),
+            power_capacity_rect_dp_compiled_signatures=int(
+                cache_stats["rect_dp_compiled_signatures"]
+            ),
+            power_capacity_rect_dp_compiled_start_options=int(
+                cache_stats["rect_dp_compiled_start_options"]
+            ),
+            power_capacity_rect_dp_deduped_start_options=int(
+                cache_stats["rect_dp_deduped_start_options"]
+            ),
+            power_capacity_rect_dp_compiled_line_subsets=int(
+                cache_stats["rect_dp_compiled_line_subsets"]
+            ),
+            power_capacity_rect_dp_peak_line_subset_options=int(
+                cache_stats["rect_dp_peak_line_subset_options"]
+            ),
+            power_capacity_rect_dp_v3_fallbacks=int(
+                cache_stats["rect_dp_v3_fallbacks"]
+            ),
+            power_capacity_m6x4_mixed_cpsat_evaluations=int(
+                cache_stats["m6x4_mixed_cpsat_evaluations"]
+            ),
+            power_capacity_m6x4_mixed_cpsat_cache_hits=int(
+                cache_stats["m6x4_mixed_cpsat_cache_hits"]
+            ),
+            power_capacity_m6x4_mixed_cpsat_selected_cases=int(
+                cache_stats["m6x4_mixed_cpsat_selected_cases"]
+            ),
+            power_capacity_m6x4_mixed_cpsat_v3_fallbacks=int(
+                cache_stats["m6x4_mixed_cpsat_v3_fallbacks"]
+            ),
+            power_capacity_bitset_oracle_evaluations=int(
+                cache_stats["bitset_oracle_evaluations"]
+            ),
+            power_capacity_bitset_fallbacks=int(cache_stats["bitset_fallbacks"]),
+            power_capacity_cpsat_fallbacks=int(cache_stats["cpsat_fallbacks"]),
+            power_capacity_oracle=str(cache_stats["oracle"]),
+            power_capacity_raw_pole_evaluations=int(cache_stats["raw_pole_evaluations"]),
+        )
+        return coeff_by_template_and_pole
+
+    def _exact_local_power_capacity_coefficient(
+        self,
+        tpl: str,
+        pole_idx: int,
+        cache_stats: Dict[str, Any],
+    ) -> int:
+        coeff_by_template_and_pole = self._exact_local_power_capacity_coefficients(
+            {str(tpl): 1},
+            cache_stats,
+        )
+        return int(coeff_by_template_and_pole[str(tpl)][int(pole_idx)])
+
+    def _candidate_pose_indices_for_group(self, group: Mapping[str, Any]) -> List[int]:
+        tpl = str(group["facility_type"])
+        cached = self._candidate_pose_indices_by_template.get(tpl)
+        if cached is not None:
+            return list(cached)
+        pool = self.facility_pools.get(tpl, [])
+        if not pool:
+            return []
+
+        candidate_indices = list(range(len(pool)))
+        if tpl in self._powered_templates and tpl != "power_pole":
+            pose_coverers = self._power_coverers_by_template_pose.get(tpl, {})
+            candidate_indices = [
+                pose_idx
+                for pose_idx in candidate_indices
+                if pose_coverers.get(pose_idx, [])
+            ]
+        candidate_indices.sort(key=lambda pose_idx: self._pose_sort_key(tpl, pose_idx))
+        self._candidate_pose_indices_by_template[tpl] = list(candidate_indices)
+        return list(candidate_indices)
+
+    def build_greedy_solution_hint(self) -> Dict[str, int]:
+        if not self.exact_mode:
+            self.build_stats["greedy_hint"] = {
+                "supported": False,
+                "complete": False,
+                "hinted_groups": 0,
+                "hinted_instances": 0,
+                "skipped_groups": [],
+                "used_power_coverage_filter": False,
+                "reason": "exact-safe greedy warm start only runs in certified_exact mode",
+            }
+            return {}
+
+        if not self._mandatory_groups:
+            self.build_stats["greedy_hint"] = {
+                "supported": True,
+                "complete": True,
+                "hinted_groups": 0,
+                "hinted_instances": 0,
+                "skipped_groups": [],
+                "used_power_coverage_filter": False,
+                "reason": "no mandatory exact groups available for warm start",
+            }
+            return {}
+
+        candidates_by_group: Dict[str, List[int]] = {}
+        used_power_coverage_filter = False
+        for group in self._mandatory_groups:
+            group_id = str(group["group_id"])
+            tpl = str(group["facility_type"])
+            if tpl in self._powered_templates and tpl != "power_pole":
+                used_power_coverage_filter = True
+            candidates_by_group[group_id] = self._candidate_pose_indices_for_group(group)
+
+        ordered_groups = sorted(
+            self._mandatory_groups,
+            key=lambda group: (
+                len(candidates_by_group[str(group["group_id"])]),
+                str(group["facility_type"]),
+                str(group["group_id"]),
+            ),
+        )
+
+        solution_hint: Dict[str, int] = {}
+        committed_cells: Set[Tuple[int, int]] = set()
+        hinted_groups = 0
+        skipped_groups: List[str] = []
+
+        for group in ordered_groups:
+            group_id = str(group["group_id"])
+            tpl = str(group["facility_type"])
+            required_count = int(group["count"])
+
+            trial_cells = set(committed_cells)
+            chosen_pose_indices: List[int] = []
+            for pose_idx in candidates_by_group[group_id]:
+                pose_cells = self._pose_cells(tpl, pose_idx)
+                if trial_cells.intersection(pose_cells):
+                    continue
+                trial_cells.update(pose_cells)
+                chosen_pose_indices.append(int(pose_idx))
+                if len(chosen_pose_indices) == required_count:
+                    break
+
+            if len(chosen_pose_indices) != required_count:
+                skipped_groups.append(group_id)
+                continue
+
+            committed_cells = trial_cells
+            hinted_groups += 1
+            for instance_id, pose_idx in zip(list(group["instance_ids"]), chosen_pose_indices):
+                solution_hint[str(instance_id)] = int(pose_idx)
+
+        hinted_instances = len(solution_hint)
+        greedy_stats: Dict[str, Any] = {
+            "supported": True,
+            "complete": hinted_groups == len(self._mandatory_groups),
+            "hinted_groups": hinted_groups,
+            "hinted_instances": hinted_instances,
+            "skipped_groups": skipped_groups,
+            "used_power_coverage_filter": used_power_coverage_filter,
+        }
+        if hinted_instances == 0:
+            greedy_stats["reason"] = "no exact-safe greedy placements found"
+
+        self.build_stats["greedy_hint"] = greedy_stats
+        return solution_hint
+
+    def _clear_solution_hints(self) -> None:
+        if hasattr(self.model, "ClearHints"):
+            self.model.ClearHints()
+            return
+        proto = self.model.Proto()
+        del proto.solution_hint.vars[:]
+        del proto.solution_hint.values[:]
+
+    def _hint_var_for_key(self, solution_key: str, pose_idx: int) -> Optional[cp_model.IntVar]:
+        if solution_key in self._group_id_by_instance:
+            group_id = self._group_id_by_instance[solution_key]
+            return self.z_vars.get(group_id, {}).get(int(pose_idx))
+        tpl = self._infer_optional_template_from_solution_id(solution_key)
+        if tpl is not None:
+            return self.optional_pose_vars.get(tpl, {}).get(int(pose_idx))
+        return None
 
     def solve(
         self,
-        time_limit_seconds: float = 300.0,
-        solution_hint: Optional[Dict[str, int]] = None,
+        time_limit_seconds: float = 60.0,
+        solution_hint: Optional[Mapping[str, int]] = None,
         known_feasible_hint: bool = False,
-    ) -> cp_model.CpSolverStatus:
-        """求解主模型。"""
+    ) -> int:
+        if not self._built:
+            self.build()
+
+        self._clear_solution_hints()
+        hinted = 0
+        if self.exact_mode and self._coordinate_delegate is not None and solution_hint:
+            hinted = self._coordinate_delegate.apply_solution_hint(solution_hint)
+        elif solution_hint:
+            for key, pose_idx in solution_hint.items():
+                var = self._hint_var_for_key(str(key), int(pose_idx))
+                if var is None:
+                    continue
+                self.model.AddHint(var, 1)
+                hinted += 1
+
         solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = time_limit_seconds
-        solver.parameters.log_search_progress = True
-        solver.parameters.cp_model_probing_level = 0  # 跳过冗余probing轮次
-
+        solver.parameters.max_time_in_seconds = float(time_limit_seconds)
+        solver.parameters.num_search_workers = 8
         if self.exact_mode:
-            if solution_hint is None:
-                solution_hint = self.build_greedy_solution_hint()
-            # Exact path: guide the high-value prefix, then let CP-SAT branch freely on
-            # the massive zero tail instead of forcing a brittle full fixed search.
-            self._add_exact_decision_strategies()
-            solver.parameters.num_workers = 1
-            solver.parameters.cp_model_presolve = False
-            solver.parameters.symmetry_level = 0
-            solver.parameters.linearization_level = 0
-            solver.parameters.search_branching = cp_model.PARTIAL_FIXED_SEARCH
-        else:
-            solver.parameters.num_workers = 4
-            # 当前主问题是超大规模 SAT 可行性模型；默认 presolve 会先吃掉整段预算，
-            # 先关闭它以便更早进入真实搜索。
-            solver.parameters.cp_model_presolve = False
-
-        # Hot-start hint
-        hint_proto = self.model.Proto().solution_hint  # type: ignore[attr-defined]
-        hint_proto.vars.clear()
-        hint_proto.values.clear()
-        effective_hinted_vars = 0
-        if solution_hint:
-            hinted_group_poses = set()
-            hinted_var_indices = set()
-            selected_group_poses: Dict[str, Set[int]] = defaultdict(set)
-            selected_tpl_poses: Dict[str, Set[int]] = defaultdict(set)
-            selected_optional_poses: Dict[str, Set[int]] = defaultdict(set)
-            selected_ghost_idx: Optional[int] = None
-
-            def _add_hint_once(var: Any, value: int = 1) -> None:
-                var_index = var.Index()
-                if var_index in hinted_var_indices:
-                    return
-                self.model.AddHint(var, value)
-                hinted_var_indices.add(var_index)
-
-            for iid, p_idx in solution_hint.items():
-                if iid == "__ghost__" and p_idx in self.u_vars:
-                    _add_hint_once(self.u_vars[p_idx], 1)
-                    selected_ghost_idx = int(p_idx)
-                    continue
-
-                if iid in self.z_vars and p_idx in self.z_vars[iid]:
-                    _add_hint_once(self.z_vars[iid][p_idx], 1)
-                    if iid in self._group_ord:
-                        selected_group_poses[iid].add(int(p_idx))
-                    tpl = next(
-                        (
-                            group["facility_type"]
-                            for group in self._mandatory_groups
-                            if group["group_id"] == iid
-                        ),
-                        None,
-                    )
-                    if tpl is not None:
-                        selected_tpl_poses[tpl].add(int(p_idx))
-                    continue
-
-                group_id = self._group_id_by_instance.get(iid)
-                if group_id and p_idx in self.z_vars.get(group_id, {}):
-                    key = (group_id, p_idx)
-                    if key not in hinted_group_poses:
-                        _add_hint_once(self.z_vars[group_id][p_idx], 1)
-                        hinted_group_poses.add(key)
-                        selected_group_poses[group_id].add(int(p_idx))
-                        tpl = next(
-                            group["facility_type"]
-                            for group in self._mandatory_groups
-                            if group["group_id"] == group_id
-                        )
-                        selected_tpl_poses[tpl].add(int(p_idx))
-                    continue
-
-                optional_tpl = self._infer_optional_template_from_solution_id(iid)
-                if optional_tpl and p_idx in self.optional_pose_vars.get(optional_tpl, {}):
-                    _add_hint_once(self.optional_pose_vars[optional_tpl][p_idx], 1)
-                    selected_optional_poses[optional_tpl].add(int(p_idx))
-                    selected_tpl_poses[optional_tpl].add(int(p_idx))
-
-            if self.exact_mode:
-                for group in self._mandatory_groups:
-                    selected = selected_group_poses.get(group["group_id"])
-                    if not selected:
-                        continue
-                    for p_idx, z_var in self.z_vars[group["group_id"]].items():
-                        if p_idx not in selected:
-                            _add_hint_once(z_var, 0)
-
-                for tpl, pose_map in self.optional_pose_vars.items():
-                    selected = selected_optional_poses.get(tpl, set())
-                    for p_idx, pose_var in pose_map.items():
-                        if p_idx not in selected:
-                            _add_hint_once(pose_var, 0)
-
-                if self.u_vars:
-                    for p_idx, u_var in self.u_vars.items():
-                        if p_idx != selected_ghost_idx:
-                            _add_hint_once(u_var, 0)
-
-                if known_feasible_hint:
-                    for tpl, active_map in self._any_active.items():
-                        selected = selected_tpl_poses.get(tpl, set())
-                        for p_idx, active_var in active_map.items():
-                            _add_hint_once(active_var, 1 if p_idx in selected else 0)
-
-                    occupied_cell_keys: Set[int] = set()
-                    for group in self._mandatory_groups:
-                        tpl = group["facility_type"]
-                        pool = self.pools[tpl]
-                        for p_idx in selected_group_poses.get(group["group_id"], set()):
-                            for cell in pool[p_idx]["occupied_cells"]:
-                                occupied_cell_keys.add(int(cell[1]) * 70 + int(cell[0]))
-                    for tpl, selected in selected_optional_poses.items():
-                        pool = self.pools.get(tpl, [])
-                        for p_idx in selected:
-                            for cell in pool[p_idx]["occupied_cells"]:
-                                occupied_cell_keys.add(int(cell[1]) * 70 + int(cell[0]))
-                    if selected_ghost_idx is not None:
-                        for cell in self._ghost_domains[selected_ghost_idx]["occupied_cells"]:
-                            occupied_cell_keys.add(int(cell[1]) * 70 + int(cell[0]))
-
-                    for cell_key, occ_var in self._solid_occupied_cell.items():
-                        _add_hint_once(occ_var, 1 if cell_key in occupied_cell_keys else 0)
-
-                    powered_cell_keys: Set[int] = set()
-                    for p_idx in selected_optional_poses.get("power_pole", set()):
-                        for cell in self.pools["power_pole"][p_idx].get("power_coverage_cells", []):
-                            powered_cell_keys.add(int(cell[1]) * 70 + int(cell[0]))
-
-                    for cell_key, powered_var in getattr(self, "powered_cell", {}).items():
-                        _add_hint_once(powered_var, 1 if cell_key in powered_cell_keys else 0)
-
-                    for tpl, pose_infos in self._power_pose_info.items():
-                        and_map = self._power_pose_and.get(tpl, {})
-                        for p_idx, and_var in and_map.items():
-                            is_valid, cell_keys = pose_infos[p_idx]
-                            is_powered = int(is_valid and all(cell_key in powered_cell_keys for cell_key in cell_keys))
-                            _add_hint_once(and_var, is_powered)
-
-            effective_hinted_vars = len(hinted_var_indices)
-
+            solver.parameters.search_branching = cp_model.FIXED_SEARCH
+            solver.parameters.symmetry_level = max(int(solver.parameters.symmetry_level), 3)
+            solver.parameters.cp_model_probing_level = max(
+                int(solver.parameters.cp_model_probing_level),
+                3,
+            )
+            solver.parameters.hint_conflict_limit = max(
+                int(solver.parameters.hint_conflict_limit),
+                1000,
+            )
         status = solver.Solve(self.model)
+
         self._solver = solver
         self._status = status
+        self._last_solution = None
         self.build_stats["last_solve"] = {
             "status": solver.StatusName(status),
             "wall_time": solver.WallTime(),
-            "branches": solver.NumBranches(),
-            "conflicts": solver.NumConflicts(),
-            "hinted_vars": len(solution_hint or {}),
-            "effective_hinted_vars": effective_hinted_vars,
+            "hinted_literals": hinted,
+            "known_feasible_hint": bool(known_feasible_hint),
+            "search_profile": str(
+                self.build_stats.get("search_guidance", {}).get("profile", "default_automatic")
+            ),
+            "search_branching": str(solver.parameters.search_branching),
         }
-
-        status_name = solver.StatusName(status)
-        print(f"🔍 [求解结果] {status_name}")
-        if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            print(f"  目标值: {solver.ObjectiveValue()}")
-            print(f"  求解时间: {solver.WallTime():.2f}s")
-
         return status
 
     def extract_solution(self) -> Dict[str, Any]:
-        """提取当前可行解：每个实例被分配的位姿索引。"""
-        if self._status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        if self._solver is None or self._status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             return {}
+        if self._last_solution is not None:
+            return dict(self._last_solution)
+        if self.exact_mode and self._coordinate_delegate is not None:
+            self._last_solution = dict(self._coordinate_delegate.extract_solution())
+            return dict(self._last_solution)
 
-        solution = {}
+        solution: Dict[str, Any] = {}
+
         for group in self._mandatory_groups:
+            group_id = group["group_id"]
             tpl = group["facility_type"]
-            pool = self.pools[tpl]
-            selected_pose_indices = [
-                p_idx
-                for p_idx, z_var in self.z_vars[group["group_id"]].items()
-                if self._solver.Value(z_var) == 1
-            ]
-            selected_pose_indices.sort(key=lambda p_idx: pool[p_idx]["pose_id"])
-
-            for iid, p_idx in zip(group["instance_ids"], selected_pose_indices):
-                solution[iid] = {
-                    "pose_idx": p_idx,
-                    "pose_id": pool[p_idx]["pose_id"],
-                    "anchor": pool[p_idx]["anchor"],
+            operation_type = group["operation_type"]
+            selected_pose_indices = sorted(
+                pose_idx
+                for pose_idx, var in self.z_vars[group_id].items()
+                if self._solver.Value(var) == 1
+            )
+            for instance_id, pose_idx in zip(sorted(group["instance_ids"]), selected_pose_indices):
+                pose = self.facility_pools[tpl][pose_idx]
+                solution[instance_id] = {
+                    "instance_id": instance_id,
                     "facility_type": tpl,
+                    "operation_type": operation_type,
+                    "pose_idx": pose_idx,
+                    "pose_id": pose["pose_id"],
+                    "anchor": dict(pose["anchor"]),
+                    "is_mandatory": True,
+                    "bound_type": "exact",
+                    "solve_mode": self.solve_mode,
                 }
 
-        for tpl in self._pose_optional_templates:
-            prefix = POSE_LEVEL_OPTIONAL_PREFIX.get(tpl, tpl)
-            pool = self.pools[tpl]
-            active_idx = 1
-            for p_idx, pose_var in self.optional_pose_vars[tpl].items():
-                if self._solver.Value(pose_var) == 1:
-                    solution[f"{prefix}_{active_idx:03d}"] = {
-                        "pose_idx": p_idx,
-                        "pose_id": pool[p_idx]["pose_id"],
-                        "anchor": pool[p_idx]["anchor"],
-                        "facility_type": tpl,
-                    }
-                    active_idx += 1
+        for tpl, vars_by_pose in self.optional_pose_vars.items():
+            operation_type = POSE_LEVEL_OPTIONAL_OPERATIONS[tpl]
+            for pose_idx, var in vars_by_pose.items():
+                if self._solver.Value(var) != 1:
+                    continue
+                pose = self.facility_pools[tpl][pose_idx]
+                synthetic_id = f"pose_optional::{tpl}::{pose['pose_id']}"
+                solution[synthetic_id] = {
+                    "instance_id": synthetic_id,
+                    "facility_type": tpl,
+                    "operation_type": operation_type,
+                    "pose_idx": pose_idx,
+                    "pose_id": pose["pose_id"],
+                    "anchor": dict(pose["anchor"]),
+                    "is_mandatory": False,
+                    "bound_type": "exact_pose_optional" if self.exact_mode else "exploratory_pose_optional",
+                    "solve_mode": self.solve_mode,
+                }
 
+        self._last_solution = dict(solution)
         return solution
 
-    def add_benders_cut(self, conflict_set: Dict[str, int]):
-        """添加 Benders No-Good 切平面 (§10.3 / §10.4)。
+    def _infer_optional_template_from_solution_id(self, solution_id: str) -> Optional[str]:
+        if solution_id.startswith("pose_optional::power_pole::"):
+            return "power_pole"
+        if solution_id.startswith("pose_optional::protocol_storage_box::"):
+            return "protocol_storage_box"
+        if solution_id.startswith("power_pole_"):
+            return "power_pole"
+        if solution_id.startswith("protocol_box_") or solution_id.startswith("protocol_storage_box_"):
+            return "protocol_storage_box"
+        return None
 
-        conflict_set: {instance_id: pose_idx} 被识别为冲突的实例-位姿组合
-        约束: Σ z_{i, p_i*} ≤ |conflict_set| - 1
-        """
-        conflict_vars = []
-        seen_group_poses = set()
-        seen_optional_poses = set()
-        for iid, p_idx in conflict_set.items():
-            if iid in self.z_vars and p_idx in self.z_vars[iid]:
-                conflict_vars.append(self.z_vars[iid][p_idx])
+    def add_benders_cut(self, conflict_set: Mapping[str, int]) -> bool:
+        if self.exact_mode and self._coordinate_delegate is not None:
+            return self._coordinate_delegate.add_benders_cut(conflict_set)
+        literals: List[cp_model.IntVar] = []
+        seen_names: Set[str] = set()
+        for solution_id, pose_idx in conflict_set.items():
+            var: Optional[cp_model.IntVar] = None
+            if solution_id in self._group_id_by_instance:
+                group_id = self._group_id_by_instance[solution_id]
+                var = self.z_vars.get(group_id, {}).get(int(pose_idx))
+            else:
+                tpl = self._infer_optional_template_from_solution_id(str(solution_id))
+                if tpl is not None:
+                    var = self.optional_pose_vars.get(tpl, {}).get(int(pose_idx))
+            if var is None:
                 continue
-
-            group_id = self._group_id_by_instance.get(iid)
-            if group_id and p_idx in self.z_vars.get(group_id, {}):
-                key = (group_id, p_idx)
-                if key not in seen_group_poses:
-                    conflict_vars.append(self.z_vars[group_id][p_idx])
-                    seen_group_poses.add(key)
+            name = var.Name()
+            if name in seen_names:
                 continue
+            seen_names.add(name)
+            literals.append(var)
 
-            optional_tpl = self._infer_optional_template_from_solution_id(iid)
-            if optional_tpl and p_idx in self.optional_pose_vars.get(optional_tpl, {}):
-                key = (optional_tpl, p_idx)
-                if key not in seen_optional_poses:
-                    conflict_vars.append(self.optional_pose_vars[optional_tpl][p_idx])
-                    seen_optional_poses.add(key)
-        if conflict_vars:
-            self.model.Add(sum(conflict_vars) <= len(conflict_vars) - 1)
-
-
-# ==========================================
-# 3. 主控入口
-# ==========================================
-
-def main():
-    print("🚀 [主模型] 启动 Master Placement Model 构建...")
-    project_root = Path(__file__).resolve().parent.parent.parent
-
-    instances, pools, rules = load_project_data(project_root)
-
-    model = MasterPlacementModel(instances, pools, rules)
-    model.build()
-
-    print(f"📊 [统计] 强制实例: {len(model._mandatory)}, "
-          f"可选实例: {len(model._optional)}, "
-          f"供电桩候选位姿: {len(model.optional_pose_vars.get('power_pole', {}))}")
-
-    # 不执行求解（太耗时），仅验证模型构建
-    print("✅ [模型构建完成] Master Placement Model 已就绪。")
-    print("   调用 model.solve() 启动求解。")
+        if not literals:
+            return False
+        # The Benders Cut: sum of conflicting z_vars <= N - 1
+        self.model.Add(sum(literals) <= len(literals) - 1)
+        self._last_solution = None
+        return True
 
 
 if __name__ == "__main__":
-    main()
+    project_root = Path(__file__).resolve().parent.parent.parent
+    instances, pools, rules = load_project_data(project_root)
+    model = MasterPlacementModel(instances, pools, rules, ghost_rect=(6, 6))
+    model.build()
+    status = model.solve(time_limit_seconds=5.0)
+    print("status=", status)

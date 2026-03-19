@@ -1,0 +1,14 @@
+{
+  "power_pole": {
+    "cap": 50,
+    "bound_type": "provisional",
+    "operation_type": "power_supply",
+    "notes": "经验上限，仅探索模式可用。"
+  },
+  "protocol_storage_box": {
+    "cap": 10,
+    "bound_type": "provisional",
+    "operation_type": "wireless_sink",
+    "notes": "经验上限，仅探索模式可用。"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "metadata": {
+    "artifact_type": "generic_io_requirements",
+    "generated_by": "src/preprocess/demand_solver.py",
+    "unit": "discrete_port_slots",
+    "notes": [
+      "required_generic_outputs describes resource-source slots from boundary ports and protocol core.",
+      "required_generic_inputs describes sink slots for final products at generic receiving facilities."
+    ]
+  },
+  "required_generic_outputs": {
+    "source_ore": 18,
+    "blue_iron_ore": 34
+  },
+  "required_generic_inputs": {
+    "valley_battery": 1,
+    "qiaoyu_capsule": 1
+  }
+}

@@ -1,0 +1,3194 @@
+[
+  {
+    "instance_id": "crusher_blue_iron_001",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_002",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_003",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_004",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_005",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_006",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_007",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_008",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_009",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_010",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_011",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_012",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_013",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_014",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_015",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_016",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_017",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_018",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_019",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_020",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_021",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_022",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_023",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_024",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_025",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_026",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_027",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_028",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_029",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_030",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_031",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_032",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_033",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_blue_iron_034",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_buckwheat_001",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_buckwheat_002",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_buckwheat_003",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_buckwheat_004",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_buckwheat_005",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_buckwheat_006",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_sandleaf_001",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_sandleaf_002",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_sandleaf_003",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_sandleaf_004",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_sandleaf_005",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_sandleaf_006",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_sandleaf_007",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_sandleaf_008",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_sandleaf_009",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_sandleaf_010",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_sandleaf_011",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_source_001",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_source_002",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_source_003",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_source_004",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_source_005",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_source_006",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_source_007",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_source_008",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_source_009",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_source_010",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_source_011",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_source_012",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_source_013",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_source_014",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_source_015",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_source_016",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_source_017",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "crusher_source_018",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "crusher_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "filling_capsule_001",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "filling_capsule",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "filling_capsule_002",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "filling_capsule",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "filling_capsule_003",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "filling_capsule",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_blue_iron_001",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_blue_iron_002",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_blue_iron_003",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_blue_iron_004",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_blue_iron_005",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_blue_iron_006",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_blue_iron_007",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_blue_iron_008",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_blue_iron_009",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_blue_iron_010",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_blue_iron_011",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_blue_iron_012",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_blue_iron_013",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_blue_iron_014",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_blue_iron_015",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_blue_iron_016",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_blue_iron_017",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_source_001",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_source_002",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_source_003",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_source_004",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_source_005",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_source_006",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_source_007",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_source_008",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_dense_source_009",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_dense_source",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_fine_buckwheat_001",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_fine_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_fine_buckwheat_002",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_fine_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_fine_buckwheat_003",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_fine_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_fine_buckwheat_004",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_fine_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_fine_buckwheat_005",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_fine_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "grinder_fine_buckwheat_006",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "grinder_fine_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "molding_bottle_001",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "molding_bottle",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "molding_bottle_002",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "molding_bottle",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "molding_bottle_003",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "molding_bottle",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "molding_bottle_004",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "molding_bottle",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "molding_bottle_005",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "molding_bottle",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "molding_bottle_006",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "molding_bottle",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "packaging_battery_001",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "packaging_battery",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "packaging_battery_002",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "packaging_battery",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "packaging_battery_003",
+    "facility_type": "manufacturing_6x4",
+    "operation_type": "packaging_battery",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "parts_maker_001",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "parts_maker",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "parts_maker_002",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "parts_maker",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "parts_maker_003",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "parts_maker",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "parts_maker_004",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "parts_maker",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "parts_maker_005",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "parts_maker",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "parts_maker_006",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "parts_maker",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_buckwheat_001",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_buckwheat_002",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_buckwheat_003",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_buckwheat_004",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_buckwheat_005",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_buckwheat_006",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_buckwheat_007",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_buckwheat_008",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_buckwheat_009",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_buckwheat_010",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_buckwheat_011",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_sandleaf_001",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_sandleaf_002",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_sandleaf_003",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_sandleaf_004",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_sandleaf_005",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_sandleaf_006",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_sandleaf_007",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_sandleaf_008",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_sandleaf_009",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_sandleaf_010",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_sandleaf_011",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_sandleaf_012",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_sandleaf_013",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_sandleaf_014",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_sandleaf_015",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_sandleaf_016",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_sandleaf_017",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_sandleaf_018",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_sandleaf_019",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_sandleaf_020",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "planter_sandleaf_021",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "planter_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_001",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_002",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_003",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_004",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_005",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_006",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_007",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_008",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_009",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_010",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_011",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_012",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_013",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_014",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_015",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_016",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_017",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_018",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_019",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_020",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_021",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_022",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_023",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_024",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_025",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_026",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_027",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_028",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_029",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_030",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_031",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_032",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_033",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_blue_iron_034",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_blue_iron",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_steel_001",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_steel",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_steel_002",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_steel",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_steel_003",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_steel",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_steel_004",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_steel",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_steel_005",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_steel",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_steel_006",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_steel",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_steel_007",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_steel",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_steel_008",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_steel",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_steel_009",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_steel",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_steel_010",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_steel",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_steel_011",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_steel",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_steel_012",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_steel",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_steel_013",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_steel",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_steel_014",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_steel",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_steel_015",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_steel",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_steel_016",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_steel",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "refinery_steel_017",
+    "facility_type": "manufacturing_3x3",
+    "operation_type": "refinery_steel",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "seed_collector_buckwheat_001",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "seed_collector_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "seed_collector_buckwheat_002",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "seed_collector_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "seed_collector_buckwheat_003",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "seed_collector_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "seed_collector_buckwheat_004",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "seed_collector_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "seed_collector_buckwheat_005",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "seed_collector_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "seed_collector_buckwheat_006",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "seed_collector_buckwheat",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "seed_collector_sandleaf_001",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "seed_collector_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "seed_collector_sandleaf_002",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "seed_collector_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "seed_collector_sandleaf_003",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "seed_collector_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "seed_collector_sandleaf_004",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "seed_collector_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "seed_collector_sandleaf_005",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "seed_collector_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "seed_collector_sandleaf_006",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "seed_collector_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "seed_collector_sandleaf_007",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "seed_collector_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "seed_collector_sandleaf_008",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "seed_collector_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "seed_collector_sandleaf_009",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "seed_collector_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "seed_collector_sandleaf_010",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "seed_collector_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "seed_collector_sandleaf_011",
+    "facility_type": "manufacturing_5x5",
+    "operation_type": "seed_collector_sandleaf",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "由配方矩阵严格推导出的强制制造实例。"
+  },
+  {
+    "instance_id": "protocol_core_001",
+    "facility_type": "protocol_core",
+    "operation_type": "protocol_core",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "唯一协议核心，属于严格精确必选实体。"
+  },
+  {
+    "instance_id": "boundary_port_001",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_002",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_003",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_004",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_005",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_006",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_007",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_008",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_009",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_010",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_011",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_012",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_013",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_014",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_015",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_016",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_017",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_018",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_019",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_020",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_021",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_022",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_023",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_024",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_025",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_026",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_027",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_028",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_029",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_030",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_031",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_032",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_033",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_034",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_035",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_036",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_037",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_038",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_039",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_040",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_041",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_042",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_043",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_044",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_045",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  },
+  {
+    "instance_id": "boundary_port_046",
+    "facility_type": "boundary_storage_port",
+    "operation_type": "boundary_io",
+    "is_mandatory": true,
+    "bound_type": "exact",
+    "solve_modes": [
+      "certified_exact",
+      "exploratory"
+    ],
+    "notes": "贴左/下基线的强制原生仓库口。"
+  }
+]
